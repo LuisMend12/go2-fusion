@@ -1,0 +1,8 @@
+# Host-side only: install on your own machine (not in the Docker image).
+# sounddevice needs the PortAudio library (bundled in the Windows/macOS wheels;
+# on Linux: sudo apt install libportaudio2).
+numpy
+requests
+sounddevice
+webrtcvad
+faster-whisper

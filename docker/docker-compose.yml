@@ -1,0 +1,34 @@
+services:
+  unitree_ros:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      - ROBOT_IP=${ROBOT_IP:-192.168.50.150}
+      - CONN_TYPE=${CONN_TYPE:-webrtc}  # webrtc = Wi-Fi (lab default); cyclonedds = Ethernet
+      - ROBOT_AES_KEY=${ROBOT_AES_KEY:-}  # Required for Go2 firmware >= 1.1.15
+      - WEBRTC_SERVER_HOST=0.0.0.0  # Listen on all interfaces
+      - WEBRTC_SERVER_PORT=${WEBRTC_SERVER_PORT:-9991}
+      - DISPLAY=${DISPLAY:-}  # For GUI applications like rviz2
+    volumes:
+      - ..:/ros2_ws/src  # Live source: edits on the host show up in the container
+      - ros2_build:/ros2_ws/build  # colcon output persists between runs,
+      - ros2_install:/ros2_ws/install  # so startup builds are incremental
+      - ros2_log:/ros2_ws/log
+      - /tmp/.X11-unix:/tmp/.X11-unix  # X11 forwarding
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+    network_mode: "host"  # Required for ROS2 discovery and robot communication
+    privileged: true  # Required for hardware access
+    devices:
+      - /dev/input:/dev/input  # For joystick access
+    # ROS 2 DDS and camera image topics use shared memory; Docker's 64 MB
+    # default can run out.
+    shm_size: 1g
+    # Start only when asked: the driver connects once at startup, so a container
+    # that auto-starts with Docker (before the robot's network is up) never connects.
+    restart: "no"
+
+volumes:
+  ros2_build:
+  ros2_install:
+  ros2_log:

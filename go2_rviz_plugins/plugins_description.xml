@@ -1,0 +1,26 @@
+<library path="go2_rviz_plugins">
+  <class name="go2_rviz_plugins/MapViewer"
+         type="go2_rviz_plugins::MapViewerPanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Live SLAM map rendered with QPainter (not RViz's OGRE scene), click to
+      send a Nav2 goal, Cancel button to cancel it.
+    </description>
+  </class>
+  <class name="go2_rviz_plugins/AutoMapper"
+         type="go2_rviz_plugins::AutoMapperPanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Start/stop controls and live log output for the autonomous
+      frontier-exploration mapper (go2_auto_mapper).
+    </description>
+  </class>
+  <class name="go2_rviz_plugins/KeyboardTeleop"
+         type="go2_rviz_plugins::KeyboardTeleopPanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Drive the robot by holding keys while this panel has focus. Publishes
+      /cmd_vel_keyboard directly from Qt key events, same controls as keyboard_teleop.
+    </description>
+  </class>
+</library>

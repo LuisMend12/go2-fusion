@@ -1,0 +1,13 @@
+.git
+**/.git
+.github
+.vscode
+docker
+!docker/entrypoint.sh
+!docker/dev_aliases.sh
+build
+install
+log
+**/__pycache__
+*.ply
+.env

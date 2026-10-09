@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>go2_rviz_plugins</name>
+  <version>0.0.1</version>
+  <description>RViz panels for the Go2: a QPainter-rendered map viewer with click-to-navigate (does not use RViz's OGRE scene, so it isn't affected by the GLSL/Mesa crash that hits rviz_default_plugins' own Map display under software rendering), and start/stop/status controls for the autonomous frontier-exploration mapper.</description>
+
+  <maintainer email="you@example.com">Luis Mendez</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>rviz_common</depend>
+  <depend>pluginlib</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>qtbase5-dev</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <rviz_common plugin="${prefix}/plugins_description.xml"/>
+  </export>
+</package>

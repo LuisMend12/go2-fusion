@@ -1,0 +1,47 @@
+/go2_teleop_node:
+  ros__parameters:
+    axis_linear:
+      x: 1
+      y: 3
+    scale_linear:
+      x: 0.5
+      y: 0.5
+
+    axis_angular:
+      yaw: 6
+    scale_angular:
+      yaw: 1.0
+
+    # Deadman button: the gamepad only drives while LB (button 4 on the Xbox
+    # controller) is held. When idle it sends nothing, so it never blocks
+    # autonomy, and when held it outranks everything (cmd_vel_joy, priority 10).
+    require_enable_button: true
+    enable_button: 4
+
+
+# Every drive-command source gets its own input so they never overwrite each
+# other. twist_mux forwards the highest-priority input that has published within
+# its timeout to cmd_vel_out (the driver). Manual control sits above autonomy.
+/twist_mux:
+  ros__parameters:
+    topics:
+      joy:
+        topic   : cmd_vel_joy
+        timeout : 0.5
+        priority: 10
+      keyboard:  # keyboard_teleop and the go2_rviz_plugins KeyboardTeleop panel
+        topic   : cmd_vel_keyboard
+        timeout : 0.5
+        priority: 9
+      navigation:  # Nav2 (and anything else publishing plain cmd_vel)
+        topic   : cmd_vel
+        timeout : 0.5
+        priority: 5
+      agent:  # go2_llm_agent
+        topic   : cmd_vel_agent
+        timeout : 0.5
+        priority: 4
+      object_navigation:  # object_navigation (no obstacle avoidance)
+        topic   : cmd_vel_object_nav
+        timeout : 0.5
+        priority: 3
