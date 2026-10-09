@@ -6,12 +6,12 @@ robot actions, then runs each step.
 
 Written by Riley Francis in [ROS2-LLM-Nav](https://github.com/RileyFrancis/ROS2-LLM-Nav).
 
-> **Pending decision: this package does not run in the Docker image yet.** It was brought
-> in as-is (only its drive topic and sit message were changed; see [FUSION.md](../FUSION.md)).
-> The team is deciding whether to keep it on OpenAI or rebuild it on Claude, so its pip
-> dependencies (`requirements.txt`: langchain, langgraph, fastapi, ...) are deliberately
-> **not** installed in the image. It builds with colcon, but `ros2 run` fails on the
-> missing imports until that decision is made.
+> **Being rebuilt on Claude: this package does not run in the Docker image yet.** It was
+> brought in as-is (only its drive topic and sit message were changed; see [FUSION.md](../FUSION.md)).
+> Its OpenAI pip dependencies (`requirements.txt`: langchain, langgraph, fastapi, ...) are
+> deliberately **not** installed in the image. It builds with colcon, but `ros2 run` fails
+> on the missing imports until the Claude rebuild lands
+> ([plan](../docs/plans/pending/2026-10-08-claude-llm-agent.md)).
 
 ## Modules
 
@@ -87,7 +87,7 @@ area, with the keyboard or joystick ready; both override the agent.
 3. Add its name to `Step.action`'s `Literal` and to the planner's system prompt.
 4. Test with `ROBOT_ENV=testing` first, then live at low speed.
 
-## Known issues (left as Riley wrote them, pending the rebuild decision)
+## Known issues (left as Riley wrote them, fixed in the Claude rebuild)
 
 - `ChatOpenAI(...)` is created when `agent.py` is imported, so it crashes without
   `OPENAI_API_KEY` even in mock mode.

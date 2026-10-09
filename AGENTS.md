@@ -18,7 +18,7 @@ This is a ROS 2 Humble workspace for a Unitree Go2 robot dog, worked on by a 5-p
 | `coco_detector` | Object detection on the camera feed (MobileNet, `/detected_objects`); to be retired in favor of `object_detection` |
 | `object_detection` | YOLOv8 detector with rough object positions and a 20 s memory (`/detected_objects/poses`, `/detected_objects_dict`) |
 | `object_navigation` | Walks toward a detected object (`/navigate_to_object`); no obstacle avoidance |
-| `go2_llm_agent` | Plain-English commands to robot actions via an LLM. Pending decision (OpenAI vs Claude): its pip deps are not in the image, so it builds but does not run |
+| `go2_llm_agent` | Plain-English commands to robot actions via an LLM. Being rebuilt on Claude (plan in `docs/plans/pending/`): its pip deps are not in the image, so it builds but does not run |
 | `speech_processor` | Text to speech through the robot's speaker |
 | `front_leg_controller` | Leg/posture commands |
 
