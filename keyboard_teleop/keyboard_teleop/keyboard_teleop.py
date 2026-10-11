@@ -52,6 +52,7 @@ class KeyboardTeleop(Node):
         self.linear_x = 0.0
         self.linear_y = 0.0
         self.angular_z = 0.0
+        self._was_moving = False
         self.last_linear_x_time = 0.0
         self.last_linear_y_time = 0.0
         self.last_angular_z_time = 0.0
@@ -130,6 +131,15 @@ class KeyboardTeleop(Node):
                 self.linear_y = 0.0
             if self.angular_z and now - self.last_angular_z_time > AXIS_HOLD_TIMEOUT:
                 self.angular_z = 0.0
+
+            moving = bool(self.linear_x or self.linear_y or self.angular_z)
+            # Publish only while moving, plus one stop when motion ends. An
+            # idle stream of zeros on /cmd_vel_keyboard (twist_mux priority 9)
+            # would hold the keyboard lane active and block Nav2, the agent
+            # and object navigation.
+            if not moving and not self._was_moving:
+                return
+            self._was_moving = moving
 
             msg = Twist()
             msg.linear.x = self.linear_x

@@ -80,6 +80,13 @@ void KeyboardTeleopPanel::publishStop()
 
 void KeyboardTeleopPanel::onPublishTimer()
 {
+  // Publish only while a key is held. An idle stream of zeros on
+  // /cmd_vel_keyboard (twist_mux priority 9) would hold the keyboard lane
+  // active forever and block Nav2, the agent and object navigation.
+  // Releasing the last key sends one stop (keyReleaseEvent).
+  if (held_keys_.isEmpty()) {
+    return;
+  }
   geometry_msgs::msg::Twist msg;
   if (held_keys_.contains(Qt::Key_W)) {
     msg.linear.x += linear_speed_;
@@ -152,6 +159,9 @@ void KeyboardTeleopPanel::keyReleaseEvent(QKeyEvent * event)
     return;
   }
   if (held_keys_.remove(event->key())) {
+    if (held_keys_.isEmpty()) {
+      publishStop();
+    }
     updateStatus();
     event->accept();
   } else {
