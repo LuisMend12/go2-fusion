@@ -92,8 +92,10 @@ ros2 run go2_auto_mapper explorer --ros-args -p min_frontier_size:=10
 
 ## Known limitations
 
-- `front_leg_controller` is a separate, currently-inert placeholder package
-  (not part of this one) — it logs simulated leg motion but never sends
-  real commands.
+- `front_leg_controller` (the `front_leg_controller.py` node specifically)
+  is a separate, currently-inert placeholder (not part of this one) — it
+  logs simulated leg motion but never sends real commands. The same
+  package's other node, `sit_controller.py`, is **not** inert — it sends a
+  real Sit command (API 1009) to `/webrtc_req`.
 - Frontier detection rescans the entire map every cycle, so very large
   maps will make each exploration step progressively slower.

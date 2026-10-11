@@ -105,7 +105,7 @@ def generate_launch_description():
                 executable='go2_driver_node',
                 parameters=[{
                     'robot_ip': robot_ip,
-                    'token': '',
+                    'token': os.getenv('ROBOT_TOKEN', ''),
                     'conn_type': 'webrtc',
                     'enable_video': enable_video,
                     'decode_lidar': False,
@@ -153,13 +153,20 @@ def generate_launch_description():
                 condition=IfCondition(LaunchConfiguration('enable_foxglove_bridge')),
             ),
 
-            # TTS node
+            # TTS node. Lives in the separate speech_processor package, not
+            # go2_robot_sdk - the other launch files (robot.launch.py etc.)
+            # already use the right package/executable; this was the only
+            # one still pointing at a nonexistent go2_robot_sdk:tts_node,
+            # which would fail to start at all. Parameter names also didn't
+            # match what speech_processor's tts_node actually declares
+            # (api_key/provider, not elevenlabs_api_key).
             Node(
-                package='go2_robot_sdk',
+                package='speech_processor',
                 executable='tts_node',
                 name='tts_node',
                 parameters=[{
-                    'elevenlabs_api_key': elevenlabs_api_key,
+                    'api_key': elevenlabs_api_key,
+                    'provider': 'elevenlabs',
                     'voice_name': voice_name
                 }],
                 on_exit=on_exit,

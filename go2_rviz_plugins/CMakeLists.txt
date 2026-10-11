@@ -8,9 +8,6 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Panels use Qt signals/slots (Q_OBJECT), so headers need to go through moc.
-set(CMAKE_AUTOMOC ON)
-
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
@@ -35,10 +32,23 @@ set(dependencies
   tf2_ros
 )
 
+# CMake's AUTOMOC dependency scanner silently found nothing for these
+# headers in this environment (moc itself works fine when invoked by hand —
+# verified manually), so panels' Q_OBJECT classes are moc'd explicitly here
+# instead of relying on it. qt5_wrap_cpp uses directory-scope include dirs,
+# not target properties, hence the explicit include_directories() here.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+qt5_wrap_cpp(MOC_SOURCES
+  include/go2_rviz_plugins/map_viewer_panel.hpp
+  include/go2_rviz_plugins/auto_mapper_panel.hpp
+  include/go2_rviz_plugins/keyboard_teleop_panel.hpp
+)
+
 add_library(${PROJECT_NAME} SHARED
   src/map_viewer_panel.cpp
   src/auto_mapper_panel.cpp
   src/keyboard_teleop_panel.cpp
+  ${MOC_SOURCES}
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

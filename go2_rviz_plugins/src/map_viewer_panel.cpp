@@ -203,7 +203,11 @@ MapViewerPanel::MapViewerPanel(QWidget * parent)
 
   nav_client_ = rclcpp_action::create_client<NavigateToPose>(node_, "/navigate_to_pose");
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
-  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node_);
+  // spin_thread=false: node_ is already spun by our own executor_ below.
+  // The default (true) makes TransformListener create its own internal
+  // executor for the /tf subscription's callback group on the same node,
+  // which conflicts with executor_.add_node(node_) further down.
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node_, false);
 
   pose_timer_ = node_->create_wall_timer(
     std::chrono::milliseconds(200),

@@ -31,6 +31,12 @@ Panels:
     Name: SlamToolboxPlugin
   - Class: nav2_rviz_plugins/Navigation 2
     Name: Navigation 2
+  - Class: go2_rviz_plugins/MapViewer
+    Name: MapViewer
+  - Class: go2_rviz_plugins/AutoMapper
+    Name: AutoMapper
+  - Class: go2_rviz_plugins/KeyboardTeleop
+    Name: KeyboardTeleop
 Visualization Manager:
   Class: ""
   Displays:

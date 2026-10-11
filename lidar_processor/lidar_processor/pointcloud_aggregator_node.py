@@ -7,7 +7,7 @@ PointCloud Aggregator Node
 Advanced point cloud processing with filtering, downsampling, and visualization.
 """
 
-from typing import List
+from typing import Optional
 from dataclasses import dataclass
 import time
 
@@ -28,6 +28,10 @@ class AggregatorConfig:
     height_filter_max: float = 3.0   # Maximum height (z-coordinate)
     downsample_rate: int = 10       # Keep every Nth point
     publish_rate: float = 5.0       # Hz
+    # StatisticalFilter.filter_points is O(n^2) (pairwise distances for
+    # every point); skip it above this count instead of letting a large
+    # cloud stall the callback for seconds-to-minutes.
+    max_filter_points: int = 20000
 
 
 class StatisticalFilter:
@@ -82,8 +86,16 @@ class PointCloudAggregatorNode(Node):
             depth=5
         )
         
-        # Storage for aggregated points
-        self.aggregated_points: List[np.ndarray] = []
+        # The upstream topic (/pointcloud/aggregated, from
+        # lidar_to_pointcloud_node) already republishes the *entire*
+        # accumulated map on its own timer, not just new points - so each
+        # message received here is already a full snapshot, not an
+        # incremental delta. Storing only the latest one (rather than
+        # appending snapshot after snapshot into a rolling window and
+        # re-concatenating all of them every publish) avoids holding and
+        # reprocessing dozens of near-duplicate full-size copies as the map
+        # grows toward lidar_to_pointcloud_node's max_points.
+        self.latest_points: Optional[np.ndarray] = None
         self.last_publish_time = time.time()
         
         # Setup subscriptions and publishers
@@ -107,6 +119,7 @@ class PointCloudAggregatorNode(Node):
         self.declare_parameter('height_filter_max', 3.0)
         self.declare_parameter('downsample_rate', 10)
         self.declare_parameter('publish_rate', 5.0)
+        self.declare_parameter('max_filter_points', 20000)
     
     def _load_configuration(self) -> AggregatorConfig:
         """Load configuration from parameters"""
@@ -116,7 +129,8 @@ class PointCloudAggregatorNode(Node):
             height_filter_min=self.get_parameter('height_filter_min').get_parameter_value().double_value,
             height_filter_max=self.get_parameter('height_filter_max').get_parameter_value().double_value,
             downsample_rate=self.get_parameter('downsample_rate').get_parameter_value().integer_value,
-            publish_rate=self.get_parameter('publish_rate').get_parameter_value().double_value
+            publish_rate=self.get_parameter('publish_rate').get_parameter_value().double_value,
+            max_filter_points=self.get_parameter('max_filter_points').get_parameter_value().integer_value
         )
     
     def _setup_subscriptions(self) -> None:
@@ -145,28 +159,22 @@ class PointCloudAggregatorNode(Node):
     def _pointcloud_callback(self, msg: PointCloud2) -> None:
         """Process incoming aggregated point cloud"""
         try:
-            # Extract points
-            points = []
-            for point in point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True):
-                points.append([point[0], point[1], point[2]])
-            
-            if not points:
+            # Vectorized extraction: read_points returns a structured numpy
+            # array, so pulling the x/y/z fields in bulk avoids a per-point
+            # Python-level loop over what can be a very large cloud.
+            cloud = point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
+            if cloud.size == 0:
                 return
-            
-            points_array = np.array(points)
-            
+            points_array = np.column_stack(
+                [cloud["x"], cloud["y"], cloud["z"]]
+            ).astype(np.float64)
+
             # Apply filters
             filtered_points = self._apply_filters(points_array)
-            
-            # Store for aggregation
+
             if len(filtered_points) > 0:
-                self.aggregated_points.append(filtered_points)
-                
-                # Keep only recent data (last 10 seconds worth)
-                max_clouds = int(self.config.publish_rate * 10)
-                if len(self.aggregated_points) > max_clouds:
-                    self.aggregated_points = self.aggregated_points[-max_clouds:]
-            
+                self.latest_points = filtered_points
+
         except Exception as e:
             self.get_logger().error(f"Error processing point cloud: {e}")
     
@@ -191,8 +199,10 @@ class PointCloudAggregatorNode(Node):
         if len(points) == 0:
             return points
         
-        # Statistical outlier removal (only if enough points)
-        if len(points) > 100:
+        # Statistical outlier removal (only if enough points to matter, and
+        # not so many that the O(n^2) pairwise-distance cost would stall
+        # this callback for seconds to minutes as the map grows)
+        if 100 < len(points) <= self.config.max_filter_points:
             points = self.statistical_filter.filter_points(points)
         
         return points
@@ -200,14 +210,10 @@ class PointCloudAggregatorNode(Node):
     def _publish_callback(self) -> None:
         """Periodic publishing of processed data"""
         try:
-            if not self.aggregated_points:
+            if self.latest_points is None or len(self.latest_points) == 0:
                 return
-            
-            # Combine all stored point clouds
-            all_points = np.vstack(self.aggregated_points)
-            
-            if len(all_points) == 0:
-                return
+
+            all_points = self.latest_points
             
             # Create header
             header = self.get_clock().now().to_msg()
@@ -228,7 +234,6 @@ class PointCloudAggregatorNode(Node):
             if current_time - self.last_publish_time > 5.0:  # Every 5 seconds
                 self.get_logger().info(
                     f"📊 Processed: {len(all_points):,} points, "
-                    f"Clouds: {len(self.aggregated_points)}, "
                     f"Downsampled: {len(all_points)//max(1, self.config.downsample_rate):,}"
                 )
                 self.last_publish_time = current_time

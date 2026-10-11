@@ -21,6 +21,7 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
     def __init__(self, config: RobotConfig, on_validated_callback: Callable, on_video_frame_callback: Callable = None, event_loop=None):
         self.config = config
         self.connections: Dict[str, Go2Connection] = {}
+        self.disconnected_events: Dict[str, asyncio.Event] = {}
         self.data_callback: Callable[[RobotData], None] = None
         self.webrtc_msgs = asyncio.Queue()
         self.on_validated_callback = on_validated_callback
@@ -37,9 +38,19 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
     async def connect(self, robot_id: str) -> None:
         """Connect to robot via WebRTC"""
         try:
+            # A retry after a previous drop (main.py now retries instead of
+            # dying) would otherwise build a brand-new Go2Connection over a
+            # still-registered stale one, leaking its RTCPeerConnection and
+            # HTTP session instead of releasing them.
+            if robot_id in self.connections:
+                await self.disconnect(robot_id)
+
             robot_idx = int(robot_id)
             robot_ip = self.config.robot_ip_list[robot_idx]
-            
+
+            disconnected_event = asyncio.Event()
+            self.disconnected_events[robot_id] = disconnected_event
+
             conn = Go2Connection(
                 robot_ip=robot_ip,
                 robot_num=robot_id,
@@ -49,17 +60,28 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
                 on_message=self._on_data_channel_message,
                 on_video_frame=self.on_video_frame_callback if self.config.enable_video else None,
                 decode_lidar=self.config.decode_lidar,
+                # Bound to this connection's own event: a late close from the
+                # previous connection must not mark the new one as dropped.
+                on_disconnected=lambda rid, ev=disconnected_event: ev.set(),
             )
-            
+
             self.connections[robot_id] = conn
             await conn.connect()
             await conn.disableTrafficSaving(True)
-            
+
             logger.info(f"Connected to robot {robot_id} at {robot_ip}")
-            
+
         except Exception as e:
             logger.error(f"Failed to connect to robot {robot_id}: {e}")
             raise
+
+    def is_connected(self, robot_id: str) -> bool:
+        """False once a mid-session drop has been detected for this robot
+        (see Go2Connection.on_disconnected). Polled by the control loop so a
+        drop that happens well after the initial connect still raises and
+        reaches main.py's retry logic, instead of going unnoticed forever."""
+        event = self.disconnected_events.get(robot_id)
+        return event is not None and not event.is_set()
 
     async def disconnect(self, robot_id: str) -> None:
         """Disconnect from robot"""

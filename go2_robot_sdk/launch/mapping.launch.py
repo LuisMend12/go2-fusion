@@ -161,6 +161,11 @@ def generate_launch_description():
             condition=IfCondition(with_joystick),
             parameters=[config_paths['joystick']]
         ),
+        # Remapped to cmd_vel_joy, twist_mux's priority-10 input
+        # (twist_mux.yaml) - without this it publishes its package default,
+        # cmd_vel, landing in the same priority-5 bucket as Nav2/
+        # keyboard_teleop/the RViz panel, so the joystick never actually
+        # preempted autonomous driving by priority.
         Node(
             package='teleop_twist_joy',
             executable='teleop_node',

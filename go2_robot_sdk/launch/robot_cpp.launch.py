@@ -5,7 +5,7 @@ from typing import List
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PythonExpression, LaunchConfiguration
 from launch_ros.actions import Node
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import FrontendLaunchDescriptionSource, PythonLaunchDescriptionSource
@@ -44,12 +44,12 @@ class Go2LaunchConfig:
     
     def _determine_connection_mode(self) -> str:
         """Determine connection mode based on IP list and connection type"""
-        return "single" if len(self.robot_ip_list) == 1 and self.conn_type != "cyclonedx" else "multi"
-    
+        return "single" if len(self.robot_ip_list) == 1 and self.conn_type != "cyclonedds" else "multi"
+
     def _get_rviz_config(self) -> str:
         """Get appropriate RViz configuration file"""
-        if self.conn_type == 'cyclonedx':
-            return "cyclonedx_config.rviz"
+        if self.conn_type == 'cyclonedds':
+            return "cyclonedds_config.rviz"
         elif self.conn_mode == 'single':
             return "single_robot_conf.rviz"
         else:
@@ -267,7 +267,12 @@ class Go2NodeFactory:
                 condition=IfCondition(with_joystick),
                 parameters=[self.config.config_paths['joystick']]
             ),
-            # Teleop twist joy node
+            # Teleop twist joy node. Remapped to cmd_vel_joy, twist_mux's
+            # priority-10 input (twist_mux.yaml) - without this it publishes
+            # its package default, cmd_vel, landing in the SAME priority-5
+            # bucket as Nav2/keyboard_teleop/the RViz panel. That meant the
+            # joystick never actually preempted autonomous driving by
+            # priority; it was a last-publisher-wins race on cmd_vel instead.
             Node(
                 package='teleop_twist_joy',
                 executable='teleop_node',
@@ -276,12 +281,16 @@ class Go2NodeFactory:
                 condition=IfCondition(with_joystick),
                 parameters=[self.config.config_paths['twist_mux']],
             ),
-            # Twist multiplexer
+            # Twist multiplexer. Runs if either `joystick` or `teleop` is on:
+            # it forwards every drive source (gamepad, keyboard, Nav2, agent,
+            # object navigation - see twist_mux.yaml) to the driver, so gating
+            # it on one arg alone silently cuts off the others.
             Node(
                 package='twist_mux',
                 executable='twist_mux',
                 output='screen',
-                condition=IfCondition(with_teleop),
+                condition=IfCondition(PythonExpression([
+                    "'", with_joystick, "' == 'true' or '", with_teleop, "' == 'true'"])),
                 parameters=[
                     {'use_sim_time': use_sim_time},
                     self.config.config_paths['twist_mux']

@@ -7,7 +7,7 @@ services:
       - ROBOT_IP=${ROBOT_IP:-192.168.50.150}
       - CONN_TYPE=${CONN_TYPE:-webrtc}
       - ROBOT_AES_KEY=${ROBOT_AES_KEY:-}  # Required for Go2 firmware >= 1.1.15
-      - WEBRTC_SERVER_HOST=0.0.0.0
+      - WEBRTC_SERVER_HOST=${WEBRTC_SERVER_HOST:-0.0.0.0}
       - WEBRTC_SERVER_PORT=${WEBRTC_SERVER_PORT:-9991}
     volumes:
       - ..:/ros2_ws/src  # Live source: edits on the host show up in the container
@@ -15,7 +15,12 @@ services:
       - ros2_install:/ros2_ws/install  # so startup builds are incremental
       - ros2_log:/ros2_ws/log
     ports:
-      - "8766:8765"  # Foxglove (host 8766: 8765 was already taken on this machine)
+      # WINDOWS_SETUP.md documents connecting at ws://localhost:8765; this
+      # was hardcoded to 8766:8765 as a one-off workaround for a port
+      # conflict on a specific machine, which silently broke the documented
+      # instructions for everyone else. Overridable per-machine via
+      # FOXGLOVE_PORT instead of hardcoding a local workaround here.
+      - "${FOXGLOVE_PORT:-8765}:8765"
     # ROS 2 DDS and camera image topics use shared memory; Docker's 64 MB
     # default can run out.
     shm_size: 1g
