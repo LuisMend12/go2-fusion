@@ -11,8 +11,53 @@ them from the repo's `docker/` folder. On Windows hosts, add
 
 ## rviz
 
-rviz isn't started on its own — it's one of the processes `robot.launch.py`
-starts, so there's no separate "open rviz" command.
+rviz needs a display. The container gets one from WSLg, which ships with
+WSL2 on Windows 11.
+
+### From PowerShell (Windows)
+
+`docker-compose.windows.yml` has no display by default, so pass WSLg's display
+into the container. From the repo's `docker/` folder:
+```powershell
+docker compose -f docker-compose.windows.yml run --rm -e DISPLAY=:0 -e WAYLAND_DISPLAY=wayland-0 -e XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir -v /run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix -v /run/desktop/mnt/host/wslg:/mnt/wslg unitree_ros rviz2 -d /ros2_ws/src/go2_robot_sdk/config/single_robot_conf.rviz
+```
+This opens rviz on its own, with no robot connection: the panels stay empty
+until something publishes. The container builds the workspace first, and
+closing the window removes it. The `/run/desktop/mnt/host/wslg` paths are
+inside Docker Desktop's VM, so they work as written from PowerShell. A
+`QStandardPaths: runtime directory ... is not owned by UID 0` warning is
+harmless.
+
+### From a WSL2 shell
+
+The default `docker-compose.yml` already mounts the display. One-time WSL
+setup is in [RUNNING_IN_WSL.md](RUNNING_IN_WSL.md).
+
+```shell
+wsl -d Ubuntu-22.04
+cd "/mnt/g/broswer download/go2-fusion/docker"   # adjust to your checkout
+```
+
+rviz with the robot stack: `robot.launch.py` starts rviz along with the
+driver, SLAM and Nav2. This connects to the robot at `ROBOT_IP`:
+```shell
+docker compose up -d
+```
+
+rviz on its own, with no robot connection (the panels stay empty until
+something publishes). The container builds the workspace first, and closing
+the window removes it:
+```shell
+docker compose run --rm unitree_ros rviz2 -d /ros2_ws/src/go2_robot_sdk/config/single_robot_conf.rviz
+```
+
+Open another rviz window in a stack that's already running:
+```shell
+docker compose exec unitree_ros bash -ic 'rviz2 -d /ros2_ws/src/go2_robot_sdk/config/single_robot_conf.rviz'
+```
+
+Closing rviz on Humble often ends with `rcl node's context is invalid` and
+exit code 139. That's a crash during shutdown and can be ignored.
 
 Restart the whole stack (driver, SLAM, Nav2, rviz, etc.):
 ```shell
