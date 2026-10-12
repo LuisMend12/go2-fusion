@@ -1,0 +1,17 @@
+# Applies only to docker/mac/Dockerfile; the team's root ignore file is unchanged.
+.git
+**/.git
+.github
+.vscode
+.agents
+.codex
+.aws
+build
+install
+log
+**/__pycache__
+**/.pytest_cache
+*.ply
+.env
+.env.*
+.docker-mac
