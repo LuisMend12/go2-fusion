@@ -1,0 +1,3 @@
+# Limit memory use while still discovering every ROS package in the workspace.
+build:
+  parallel-workers: 2

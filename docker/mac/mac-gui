@@ -1,0 +1,21 @@
+#!/bin/bash
+# Render with Mesa/Xvfb in Docker; send the visible window to XQuartz.
+set -euo pipefail
+if [ "$#" -eq 0 ]; then
+    echo "Usage: mac-gui <GUI command> [arguments...]" >&2
+    exit 2
+fi
+if [ ! -s /run/go2-xauth/display ] || [ ! -s /run/go2-xauth/Xauthority ]; then
+    echo "On the Mac, open XQuartz and run: bash docker/mac/mac-xauth.sh" >&2
+    exit 1
+fi
+export DISPLAY="$(cat /run/go2-xauth/display)"
+export XAUTHORITY=/run/go2-xauth/Xauthority
+export GO2_GUI_DISPLAY="$DISPLAY"
+if ! timeout 5 xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+    echo "XQuartz access failed. On the Mac, rerun: bash docker/mac/mac-xauth.sh" >&2
+    echo "XQuartz Settings > Security must allow connections from network clients." >&2
+    exit 1
+fi
+exec xvfb-run -a -s '-screen 0 1440x900x24 +extension GLX -nolisten tcp' \
+    sh -ec 'render_display="$DISPLAY"; xauth merge /run/go2-xauth/Xauthority; export DISPLAY="$GO2_GUI_DISPLAY"; exec /opt/VirtualGL/bin/vglrun -d "$render_display" -c proxy "$@"' sh "$@"
