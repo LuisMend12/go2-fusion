@@ -6,14 +6,19 @@ from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import String
 
 from cv_bridge import CvBridge
+import torch
 from ultralytics import YOLO
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from ament_index_python.packages import get_package_share_directory
 
 import numpy as np
 import json
 import math
 import os
+
+# How often the object memory is logged. Logging it on every frame floods
+# the console and the /rosout topic.
+MEMORY_LOG_PERIOD_SEC = 5.0
 
 
 class ObjectDetector(Node):
@@ -28,15 +33,33 @@ class ObjectDetector(Node):
             get_package_share_directory("object_detection"), "models", "yolov8n.pt"
         )
         model_path = self.declare_parameter("model_path", default_model).value
-        self.get_logger().info(f"Loading YOLO model from {model_path}")
+        # On CPU, PyTorch uses every core by default, which starves the driver,
+        # SLAM, Nav2 and RViz running in the same container.
+        num_threads = self.declare_parameter("num_threads", 4).value
+        # Inference runs at most this often; frames in between are dropped.
+        max_rate_hz = self.declare_parameter("max_rate_hz", 5.0).value
+        self.min_period_sec = 1.0 / max_rate_hz if max_rate_hz > 0 else 0.0
+        self.last_inference_sec = 0.0
+
+        torch.set_num_threads(num_threads)
+        self.get_logger().info(
+            f"Loading YOLO model from {model_path} "
+            f"({num_threads} CPU threads, max {max_rate_hz} Hz)"
+        )
         self.model = YOLO(model_path)
 
-        # Subscribe to RGB
+        # Depth 1: when inference falls behind, only the newest frame is kept
+        # instead of a backlog of stale ones.
+        camera_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
         self.rgb_sub = self.create_subscription(
             Image,
             "/camera/image_raw",
             self.rgb_callback,
-            qos_profile_sensor_data
+            camera_qos
         )
 
         # Publishers
@@ -77,13 +100,21 @@ class ObjectDetector(Node):
     # ==========================================================
     def rgb_callback(self, msg):
 
-        frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        results = self.model(frame)
+        now_sec = self.get_clock().now().nanoseconds / 1e9
+        if now_sec - self.last_inference_sec < self.min_period_sec:
+            return
+        self.last_inference_sec = now_sec
 
-        # Publish annotated image
-        annotated = results[0].plot()
-        annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
-        self.annotated_pub.publish(annotated_msg)
+        frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        # verbose=False: ultralytics otherwise prints a line per frame.
+        results = self.model(frame, verbose=False)
+
+        # Drawing and sending a full-size image is costly, so skip it when
+        # nobody (e.g. an RViz Image display) is watching.
+        if self.annotated_pub.get_subscription_count() > 0:
+            annotated = results[0].plot()
+            annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
+            self.annotated_pub.publish(annotated_msg)
 
         image_width = frame.shape[1]
         image_height = frame.shape[0]
@@ -171,7 +202,9 @@ class ObjectDetector(Node):
         self.dict_pub.publish(json_msg)
 
         if clean_dict:
-            self.get_logger().info(f"Memory: {clean_dict}")
+            self.get_logger().info(
+                f"Memory: {clean_dict}", throttle_duration_sec=MEMORY_LOG_PERIOD_SEC
+            )
 
 
 def main():

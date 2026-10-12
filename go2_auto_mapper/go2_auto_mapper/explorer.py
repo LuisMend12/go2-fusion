@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import ctypes
 import math
+import signal
 import time
 from collections import deque
 
@@ -690,7 +692,27 @@ class FrontierExplorer(Node):
             rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
 
 
+PR_SET_PDEATHSIG = 1  # from <linux/prctl.h>
+
+
+def stop_when_parent_dies():
+    """Get SIGINT when the launching process exits, so the explorer shuts
+    down cleanly (cancelling its Nav2 goal) instead of living on as an orphan.
+
+    The RViz AutoMapper panel starts the explorer and stops it on Stop, but if
+    RViz crashes or is killed, nothing stops it, and each orphan keeps sending
+    Nav2 goals that fight the others.
+    """
+    try:
+        libc = ctypes.CDLL('libc.so.6', use_errno=True)
+        libc.prctl(PR_SET_PDEATHSIG, signal.SIGINT)
+    except OSError:
+        pass  # Not Linux: run without the safeguard.
+
+
 def main(args=None):
+
+    stop_when_parent_dies()
 
     rclpy.init(args=args)
 

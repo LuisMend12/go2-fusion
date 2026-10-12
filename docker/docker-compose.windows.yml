@@ -19,6 +19,9 @@ services:
     # ROS 2 DDS and camera image topics use shared memory; Docker's 64 MB
     # default can run out.
     shm_size: 1g
+    # PID 1 is otherwise `ros2 launch`, which never reaps orphaned processes
+    # (e.g. an auto mapper whose RViz panel crashed), so they pile up as zombies.
+    init: true
     restart: "no"
 
 volumes:
