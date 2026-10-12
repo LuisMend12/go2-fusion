@@ -44,6 +44,8 @@ You should see JSON like `{"chair_1": {"x": 2.1, "y": -0.3}}`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `model_path` | `share/object_detection/models/yolov8n.pt` | YOLO weights file |
+| `num_threads` | `4` | CPU threads for PyTorch. Unlimited, it takes every core and starves the driver, SLAM, Nav2 and RViz |
+| `max_rate_hz` | `5.0` | Most frames per second to run YOLO on; frames in between are dropped. `0` runs on every frame |
 
 Try other weights without rebuilding:
 `ros2 run object_detection detector_node --ros-args -p model_path:=/path/to/weights.pt`.
@@ -54,8 +56,8 @@ update the default in `detector_node.py`.
 
 - Positions are very rough: no depth camera, no camera calibration, no TF lookup.
 - No confidence threshold of its own; it trusts every box YOLO returns.
-- On CPU it runs every frame with no throttling and logs the memory every frame, so expect
-  lag and a noisy log.
+- On CPU, detections run at most `max_rate_hz` and lag the camera by about one inference
+  (50 to 100 ms). The annotated image is only drawn while something subscribes to it.
 - `ultralytics` downloads a font file the first time it draws boxes, so the container
   needs internet on first run.
 - Needs `ultralytics` from pip; it is in the repo's `requirements.txt`, so the Docker image
