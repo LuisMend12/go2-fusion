@@ -32,23 +32,16 @@ set(dependencies
   tf2_ros
 )
 
-# CMake's AUTOMOC dependency scanner silently found nothing for these
-# headers in this environment (moc itself works fine when invoked by hand —
-# verified manually), so panels' Q_OBJECT classes are moc'd explicitly here
-# instead of relying on it. qt5_wrap_cpp uses directory-scope include dirs,
-# not target properties, hence the explicit include_directories() here.
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
-qt5_wrap_cpp(MOC_SOURCES
-  include/go2_rviz_plugins/map_viewer_panel.hpp
-  include/go2_rviz_plugins/auto_mapper_panel.hpp
-  include/go2_rviz_plugins/keyboard_teleop_panel.hpp
-)
-
+# The headers are listed so AUTOMOC finds their Q_OBJECT macros: it only scans
+# headers that are sources or sit next to a .cpp, and these live in include/.
+# Without moc output the panels' vtables are missing and RViz can't load them.
 add_library(${PROJECT_NAME} SHARED
   src/map_viewer_panel.cpp
   src/auto_mapper_panel.cpp
   src/keyboard_teleop_panel.cpp
-  ${MOC_SOURCES}
+  include/${PROJECT_NAME}/map_viewer_panel.hpp
+  include/${PROJECT_NAME}/auto_mapper_panel.hpp
+  include/${PROJECT_NAME}/keyboard_teleop_panel.hpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
