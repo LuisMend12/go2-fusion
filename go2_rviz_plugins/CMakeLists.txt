@@ -35,10 +35,16 @@ set(dependencies
   tf2_ros
 )
 
+# The headers are listed so AUTOMOC finds their Q_OBJECT macros: it only scans
+# headers that are sources or sit next to a .cpp, and these live in include/.
+# Without moc output the panels' vtables are missing and RViz can't load them.
 add_library(${PROJECT_NAME} SHARED
   src/map_viewer_panel.cpp
   src/auto_mapper_panel.cpp
   src/keyboard_teleop_panel.cpp
+  include/${PROJECT_NAME}/map_viewer_panel.hpp
+  include/${PROJECT_NAME}/auto_mapper_panel.hpp
+  include/${PROJECT_NAME}/keyboard_teleop_panel.hpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

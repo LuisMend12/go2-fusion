@@ -121,6 +121,24 @@ ROBOT_IP=<ROBOT_IP> CONN_TYPE=<webrtc/cyclonedds> docker compose up --build
 
 The image holds only the dependencies; the repo is mounted into the container and built on start, so code changes need no image rebuild. See [CONTRIBUTING.md](CONTRIBUTING.md) for the edit loop and team workflow.
 
+If the container won't start with "The aioice submodule is missing", run `git submodule update --init --recursive` from the repo root first.
+
+### Opening RViz via Docker
+
+RViz on its own, with no robot connection. Run it from the `docker/` folder; closing the window stops the container.
+
+Linux or a WSL2 shell (the default compose file already mounts the display):
+```shell
+docker compose run --rm unitree_ros rviz2 -d /ros2_ws/src/go2_robot_sdk/config/single_robot_conf.rviz
+```
+
+Windows PowerShell (Docker Desktop and WSL2 on Windows 11; the extra flags pass WSLg's display into the container):
+```powershell
+docker compose -f docker-compose.windows.yml run --rm -e DISPLAY=:0 -e WAYLAND_DISPLAY=wayland-0 -e XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir -v /run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix -v /run/desktop/mnt/host/wslg:/mnt/wslg unitree_ros rviz2 -d /ros2_ws/src/go2_robot_sdk/config/single_robot_conf.rviz
+```
+
+On Linux and in WSL2, `docker compose up` starts RViz along with the full robot stack. More rviz commands are in [USEFUL_COMMANDS.md](USEFUL_COMMANDS.md#rviz).
+
 ## Usage
 
 Don't forget to set up your Go2 robot in Wifi-mode and obtain the IP. You can use the mobile app to get it. Go to Device -> Data -> Automatic Machine Inspection and look for STA Network: wlan0.
