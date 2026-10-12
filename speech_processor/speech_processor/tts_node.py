@@ -66,12 +66,17 @@ class TTSConfig:
 
 class AudioCache:
     """Thread-safe audio cache management"""
-    
+
+    # Without a cap this directory grows without bound over the node's
+    # lifetime - the only way to clear it was a ROS service that isn't even
+    # wired up (see _setup_communication).
+    MAX_CACHE_FILES = 200
+
     def __init__(self, cache_dir: str, enabled: bool = True):
         self.cache_dir = cache_dir
         self.enabled = enabled
         self._lock = threading.Lock()
-        
+
         if self.enabled:
             os.makedirs(self.cache_dir, exist_ok=True)
     
@@ -103,9 +108,27 @@ class AudioCache:
                 cache_path = self.get_cache_path(text, voice_name, provider)
                 with open(cache_path, "wb") as f:
                     f.write(audio_data)
+                self._evict_oldest_if_over_limit()
                 return True
             except Exception:
                 return False
+
+    def _evict_oldest_if_over_limit(self) -> None:
+        """Remove the oldest cached files once over MAX_CACHE_FILES. Caller
+        must already hold self._lock."""
+        try:
+            entries = [
+                os.path.join(self.cache_dir, f) for f in os.listdir(self.cache_dir)
+            ]
+            entries = [f for f in entries if os.path.isfile(f)]
+            overflow = len(entries) - self.MAX_CACHE_FILES
+            if overflow <= 0:
+                return
+            entries.sort(key=os.path.getmtime)
+            for path in entries[:overflow]:
+                os.unlink(path)
+        except Exception:
+            pass
     
     def clear(self) -> bool:
         """Clear all cached files"""
@@ -257,8 +280,15 @@ class EnhancedTTSNode(Node):
         # Setup subscriptions and publishers
         self._setup_communication()
         
-        # RTC topic constants (imported from domain)
-        self.RTC_TOPIC = {"AUDIO_HUB_REQ": "rt/api/audiohub/request"}  # Fallback if import fails
+        # RTC topic for the audio-hub sub-protocol (start/chunk/end
+        # commands). Matches go2_robot_sdk's
+        # domain.constants.webrtc_topics.RTC_TOPIC["AUDIO_HUB_REQ"]. This
+        # was previously 1003 (an api_id-looking int, not a topic string) -
+        # WebRtcReq.topic is a `string` field, so every call to
+        # _send_audio_command raised an AssertionError on the generated
+        # message setter, silently caught by tts_callback's broad except -
+        # meaning every non-local-playback TTS request failed outright.
+        self.RTC_TOPIC = {"AUDIO_HUB_REQ": "rt/api/audiohub/request"}
         
         # Log initialization
         self._log_initialization()
@@ -325,14 +355,37 @@ class EnhancedTTSNode(Node):
         #     Empty, "clear_tts_cache", self.clear_cache_callback
         # )
     
+    MAX_TEXT_LENGTH = 1000
+
     def tts_callback(self, msg: String) -> None:
-        """Handle incoming TTS requests"""
+        """Handle incoming TTS requests.
+
+        Dispatches to a background thread: synthesis (a blocking HTTP call)
+        and robot playback (a sequence of blocking time.sleep() calls
+        totaling tens of seconds to minutes) used to run directly in this
+        subscription callback, on the default single-threaded executor -
+        blocking every other callback on this node for the duration of a
+        single TTS request.
+        """
+        text = msg.data.strip()
+        if not text:
+            self.get_logger().warn("Received empty TTS request")
+            return
+        if len(text) > self.MAX_TEXT_LENGTH:
+            self.get_logger().warn(
+                f"TTS request text is {len(text)} chars, exceeds "
+                f"{self.MAX_TEXT_LENGTH}-char limit; truncating."
+            )
+            text = text[:self.MAX_TEXT_LENGTH]
+
+        threading.Thread(
+            target=self._process_tts_request, args=(text,), daemon=True
+        ).start()
+
+    def _process_tts_request(self, text: str) -> None:
+        """Synthesize (or fetch from cache) and play back one TTS request.
+        Runs on a background thread - see tts_callback."""
         try:
-            text = msg.data.strip()
-            if not text:
-                self.get_logger().warn("Received empty TTS request")
-                return
-            
             self.get_logger().info(f'🎤 TTS Request: "{text}" (voice: {self.config.voice_name})')
             
             # Check cache first

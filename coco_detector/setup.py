@@ -22,7 +22,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            "coco_detector_node = coco_detector.coco_detector_node"
+            "coco_detector_node = coco_detector.coco_detector_node:main"
         ],
     },
 )

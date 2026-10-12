@@ -71,6 +71,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://install.julialang.org | sh -s -- --yes
 ENV PATH="/root/.juliaup/bin:${PATH}"
+# Pinned to match go2_map_viewer_julia/Manifest.toml's julia_version - an
+# unpinned install otherwise lets a future rebuild silently pick up
+# whatever Julia version juliaup's "release" channel resolves to at build
+# time, which can drift from the committed Manifest.toml.
+RUN juliaup add 1.13.1 && juliaup default 1.13.1
 
 COPY go2_map_viewer_julia/Project.toml go2_map_viewer_julia/Manifest.toml \
     /opt/go2_map_viewer_julia/

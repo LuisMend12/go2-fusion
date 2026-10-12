@@ -8,8 +8,27 @@ from launch import LaunchDescription
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, OpaqueFunction
 from launch.launch_description_sources import FrontendLaunchDescriptionSource, PythonLaunchDescriptionSource
+
+
+def _validate_map_arg(context, *args, **kwargs):
+    """Fail fast with a clear message instead of letting nav2's map_server/
+    AMCL hit an empty or missing map path with a low-level YAML/file error.
+    Runs via OpaqueFunction so it sees the `map` argument's actual resolved
+    value (CLI override or MAP_FILE-derived default), not just the raw
+    MAP_FILE env var, which would otherwise be empty whenever the caller
+    correctly passes map:=... directly instead of setting MAP_FILE."""
+    resolved_map = LaunchConfiguration('map').perform(context)
+    if not resolved_map:
+        raise RuntimeError(
+            "No map specified. Pass map:=/path/to/map.yaml or set the "
+            "MAP_FILE environment variable before launching "
+            "navigation.launch.py."
+        )
+    if not os.path.isfile(resolved_map):
+        raise RuntimeError(f"Map file not found: {resolved_map}")
+    return []
 
 
 def generate_launch_description():
@@ -165,6 +184,11 @@ def generate_launch_description():
             condition=IfCondition(with_joystick),
             parameters=[config_paths['joystick']]
         ),
+        # Remapped to cmd_vel_joy, twist_mux's priority-10 input
+        # (twist_mux.yaml) - without this it publishes its package default,
+        # cmd_vel, landing in the same priority-5 bucket as Nav2/
+        # keyboard_teleop/the RViz panel, so the joystick never actually
+        # preempted autonomous driving by priority.
         Node(
             package='teleop_twist_joy',
             executable='teleop_node',
@@ -237,6 +261,7 @@ def generate_launch_description():
     
     return LaunchDescription(
         launch_args +
+        [OpaqueFunction(function=_validate_map_arg)] +
         core_nodes +
         teleop_nodes +
         viz_nodes +

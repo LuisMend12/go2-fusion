@@ -15,24 +15,46 @@ from .presentation.go2_driver_node import Go2DriverNode
 
 
 async def run_robot_connections(node: Go2DriverNode):
-    """Start robot connections"""
-    try:
-        # Connect to robots
-        await node.connect_robots()
+    """Keep the robot connected, retrying with backoff on failure.
 
-        # Start control loops for each robot
+    A transient blip (the robot's WebRTC handshake, http://<ip>:9991/con_notify,
+    has been observed to time out for several seconds at a time) used to
+    propagate out of this function, which made main_async()'s
+    asyncio.wait(..., FIRST_COMPLETED) treat it as a reason to cancel the
+    ROS2 spin task and shut the whole node down - so one brief network hiccup
+    permanently killed the entire driver until a human noticed and manually
+    restarted the container. Retrying here instead keeps the node alive
+    through anything but a truly fatal, unrecoverable error.
+    """
+    backoff_sec = 5.0
+    max_backoff_sec = 60.0
+    while True:
         tasks = []
-        for i in range(len(node.config.robot_ip_list)):
-            robot_id = str(i)
-            task = asyncio.create_task(node.run_robot_control_loop(robot_id))
-            tasks.append(task)
+        try:
+            # Connect to robots
+            await node.connect_robots()
 
-        # Wait for all tasks to complete
-        await asyncio.gather(*tasks)
+            # Start control loops for each robot
+            for i in range(len(node.config.robot_ip_list)):
+                robot_id = str(i)
+                task = asyncio.create_task(node.run_robot_control_loop(robot_id))
+                tasks.append(task)
 
-    except Exception as e:
-        node.get_logger().error(f"Error in robot connections: {e}")
-        raise
+            # Wait for all tasks to complete (they only do via cancellation,
+            # e.g. node shutdown, or by raising on a disconnect)
+            await asyncio.gather(*tasks)
+            return
+
+        except Exception as e:
+            # Stop the other robots' loops too; the retry restarts them all.
+            for task in tasks:
+                task.cancel()
+            node.get_logger().error(
+                f"Error in robot connections: {e}. "
+                f"Retrying in {backoff_sec:.0f}s."
+            )
+            await asyncio.sleep(backoff_sec)
+            backoff_sec = min(backoff_sec * 2, max_backoff_sec)
 
 
 async def spin_node(node: Go2DriverNode):
@@ -44,6 +66,9 @@ async def spin_node(node: Go2DriverNode):
         try:
             executor.spin()
         except Exception as e:
+            # Stop the other robots' loops too; the retry restarts them all.
+            for task in tasks:
+                task.cancel()
             node.get_logger().error(f"Error in ROS2 spin: {e}")
         finally:
             executor.shutdown()

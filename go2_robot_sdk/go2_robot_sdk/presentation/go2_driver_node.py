@@ -233,6 +233,17 @@ class Go2DriverNode(Node):
                 PointCloud2, '/utlidar/cloud',
                 self._on_cyclonedds_lidar, qos_profile)
 
+    # The config-backed parameters declared in _setup_configuration() that
+    # are only ever read once, at construction time. Deliberately NOT a
+    # catch-all for every unrecognized name: this callback also fires for
+    # parameters rclpy declares on this node automatically (e.g. per-topic
+    # `qos_overrides.*` parameters created inside create_publisher()), and
+    # rejecting those broke node construction outright.
+    _CONSTRUCTION_TIME_ONLY_PARAMS = frozenset({
+        'robot_ip', 'token', 'aes_key', 'conn_type',
+        'enable_video', 'decode_lidar', 'publish_raw_voxel',
+    })
+
     def _on_set_parameters(self, params) -> SetParametersResult:
         """Callback for parameter changes"""
         result = SetParametersResult(successful=True)
@@ -242,30 +253,42 @@ class Go2DriverNode(Node):
                 if p.name == 'obstacle_avoidance':
                     self.get_logger().info(f'New obstacle_avoidance value: {p.value}')
                     self.config.obstacle_avoidance = p.value
-                    
+
                     try:
                         self.robot_control_service.set_obstacle_avoidance(p.value, "0")
                     except Exception as e:
                         self.get_logger().error(f"Failed to set obstacle avoidance: {e}")
                         result.successful = False
                         result.reason = str(e)
-                        break
-                    
+                        return result
+
                     result.successful = True
                     result.reason = 'Updated obstacle_avoidance'
-                    break
+                elif p.name in self._CONSTRUCTION_TIME_ONLY_PARAMS:
+                    # Reporting success here without actually reconnecting/
+                    # re-setting-up would let self.config and the live
+                    # connection silently disagree - e.g.
+                    # `ros2 param set conn_type cyclonedds` would report
+                    # success while nothing actually changed.
+                    result.successful = False
+                    result.reason = (
+                        f"'{p.name}' cannot be changed at runtime; "
+                        f"restart the node instead"
+                    )
+                    return result
+                # Any other parameter name (including rclpy/ROS2-internal
+                # ones this node didn't declare itself) is left alone.
         except Exception as e:
             self.get_logger().error(f"Error setting parameters: {e}")
             result.successful = False
             result.reason = str(e)
-            
+
         return result
 
     def _on_cmd_vel(self, msg: Twist, robot_id: str) -> None:
         """Callback for movement commands"""
         self.robot_control_service.handle_cmd_vel(
-            msg.linear.x, msg.linear.y, msg.angular.z, 
-            robot_id, self.config.obstacle_avoidance
+            msg.linear.x, msg.linear.y, msg.angular.z, robot_id
         )
 
     def _on_webrtc_req(self, msg: WebRtcReq, robot_id: str) -> None:
@@ -290,9 +313,17 @@ class Go2DriverNode(Node):
         """Callback for processing video frames"""
         logger.info(f"Video frame received for robot {robot_id}")
 
+        # A single bad/corrupted frame (expected occasionally on a flaky
+        # wifi link) used to permanently end camera publishing for the rest
+        # of the node's life. Retry transient errors; only give up after
+        # enough consecutive failures to indicate the track itself is dead.
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+
         while True:
             try:
                 frame = await track.recv()
+                consecutive_errors = 0
                 img = frame.to_ndarray(format="bgr24")
 
                 # Create camera data
@@ -314,8 +345,18 @@ class Go2DriverNode(Node):
                 await asyncio.sleep(0)
 
             except Exception as e:
-                logger.error(f"Error processing video frame: {e}")
-                break
+                consecutive_errors += 1
+                logger.error(
+                    f"Error processing video frame for robot {robot_id} "
+                    f"({consecutive_errors}/{max_consecutive_errors}): {e}"
+                )
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error(
+                        f"Too many consecutive video errors for robot "
+                        f"{robot_id}, giving up on this track."
+                    )
+                    break
+                await asyncio.sleep(0.1)
 
     # CycloneDDS callbacks
     def _on_cyclonedds_low_state(self, msg: LowState) -> None:
@@ -347,6 +388,22 @@ class Go2DriverNode(Node):
         """Main robot control loop"""
         while True:
             try:
+                # A mid-session WebRTC drop (ICE failure, robot reboot, wifi
+                # blip) used to go completely unnoticed here: this loop just
+                # kept calling process_webrtc_commands() and sleeping, with
+                # nothing checking whether the connection was actually still
+                # alive, so the node looked healthy while silently receiving
+                # nothing. Raising here instead lets main.py's retry/backoff
+                # logic actually engage for a drop, not just a failed
+                # initial connect.
+                if (
+                    self.config.conn_type == 'webrtc'
+                    and not self.webrtc_adapter.is_connected(robot_id)
+                ):
+                    raise ConnectionError(
+                        f"WebRTC connection to robot {robot_id} was lost"
+                    )
+
                 # Process joystick commands
                 if self.joy_state.buttons:
                     self.robot_control_service.handle_joy_command(

@@ -43,6 +43,7 @@ class Go2Connection:
         on_open: Optional[Callable] = None,
         on_video_frame: Optional[Callable] = None,
         decode_lidar: bool = True,
+        on_disconnected: Optional[Callable] = None,
     ):
         self.pc = RTCPeerConnection()
         self.robot_ip = robot_ip
@@ -51,38 +52,71 @@ class Go2Connection:
         self.aes_key = aes_key
         self.robot_validation = "PENDING"
         self.validation_result = "PENDING"
-        
+
         # Callbacks
         self.on_validated = on_validated
         self.on_message = on_message
         self.on_open = on_open
         self.on_video_frame = on_video_frame
         self.decode_lidar = decode_lidar
-        
+        # Fires when the connection is lost *after* having been established
+        # (ICE/DTLS failure, robot reboot, wifi drop mid-session) - without
+        # this, such a drop was completely invisible: on_connection_state_change
+        # only logged, nothing raised, and the driver kept running silently
+        # receiving nothing. This is what lets the control loop notice and
+        # the retry logic in main.py actually engage for a mid-session drop,
+        # not just a failed initial connect.
+        self.on_disconnected = on_disconnected
+        self._was_connected = False
+
         # Initialize components
         self.http_client = HttpClient(timeout=10.0)
         self.data_decoder = WebRTCDataDecoder(enable_lidar_decoding=decode_lidar)
-        
+
         # Setup data channel
         self.data_channel = self.pc.createDataChannel("data", id=0)
         self.data_channel.on("open", self.on_data_channel_open)
         self.data_channel.on("message", self.on_data_channel_message)
-        
+        self.data_channel.on("close", self.on_data_channel_close)
+
         # Setup peer connection events
         self.pc.on("track", self.on_track)
         self.pc.on("connectionstatechange", self.on_connection_state_change)
-        
+
         # Add video transceiver if video callback provided
         if self.on_video_frame:
             self.pc.addTransceiver("video", direction="recvonly")
-    
+
     def on_connection_state_change(self) -> None:
         """Handle peer connection state changes"""
-        logger.info(f"Connection state is {self.pc.connectionState}")
-        
+        state = self.pc.connectionState
+        logger.info(f"Connection state is {state}")
+
+        if state == "connected":
+            self._was_connected = True
+        elif state in ("failed", "disconnected", "closed") and self._was_connected:
+            logger.error(
+                f"WebRTC connection to robot {self.robot_num} lost "
+                f"(state: {state})"
+            )
+            self._notify_disconnected()
+
         # Note: Validation is handled after successful WebRTC connection
         # in the original implementation, not here
-    
+
+    def on_data_channel_close(self) -> None:
+        """Handle data channel close - the robot side can close the channel
+        without the peer connection itself transitioning to failed/closed."""
+        logger.error(f"Data channel for robot {self.robot_num} closed")
+        self._notify_disconnected()
+
+    def _notify_disconnected(self) -> None:
+        if self.on_disconnected:
+            try:
+                self.on_disconnected(self.robot_num)
+            except Exception as e:
+                logger.error(f"Error in on_disconnected callback: {e}")
+
     def on_data_channel_open(self) -> None:
         """Handle data channel open event"""
         logger.info("Data channel is open")
@@ -260,7 +294,8 @@ class Go2Connection:
         """Establish WebRTC connection to robot with full encryption"""
         try:
             logger.info("Trying to send SDP using full encrypted method...")
-            
+            loop = asyncio.get_running_loop()
+
             # Step 1: Create WebRTC offer
             offer = await self.pc.createOffer()
             await self.pc.setLocalDescription(offer)
@@ -277,7 +312,14 @@ class Go2Connection:
             
             # Step 2: Get robot's public key
             try:
-                response = self.http_client.get_robot_public_key(self.robot_ip)
+                # requests is synchronous; run it off the event loop so a
+                # slow/timed-out handshake (the flaky-wifi scenario this
+                # connection is most likely to hit) doesn't freeze every
+                # other coroutine - other robots, video decode, the ROS
+                # bridge - sharing this same loop for up to the 10s timeout.
+                response = await loop.run_in_executor(
+                    None, self.http_client.get_robot_public_key, self.robot_ip
+                )
                 if not response:
                     raise Go2ConnectionError("Failed to get public key response")
                 
@@ -319,10 +361,12 @@ class Go2Connection:
                 }
                 
                 # Send the encrypted data
-                response = self.http_client.send_encrypted_sdp(
+                response = await loop.run_in_executor(
+                    None,
+                    self.http_client.send_encrypted_sdp,
                     self.robot_ip, path_ending, encrypted_body
                 )
-                
+
                 if not response:
                     raise Go2ConnectionError("Failed to send encrypted SDP")
                 

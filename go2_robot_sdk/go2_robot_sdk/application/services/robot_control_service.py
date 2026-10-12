@@ -6,7 +6,6 @@ import logging
 
 
 from ...domain.interfaces import IRobotController
-from ..utils.command_generator import gen_mov_command
 from ...domain.constants import RTC_TOPIC
 
 
@@ -19,17 +18,18 @@ class RobotControlService:
     def __init__(self, controller: IRobotController):
         self.controller = controller
 
-    def handle_cmd_vel(self, x: float, y: float, z: float, robot_id: str, obstacle_avoidance: bool = False) -> None:
-        """Process movement command"""
+    def handle_cmd_vel(self, x: float, y: float, z: float, robot_id: str) -> None:
+        """Process movement command, including an explicit stop.
+
+        A Twist(0,0,0) - exactly how teleop/Nav2 signal "stop" - used to be
+        silently dropped here instead of forwarded, since only non-zero
+        commands took this path at all. (obstacle_avoidance was previously
+        applied to a command object built here and then discarded -
+        send_movement_command already applies the live
+        self.config.obstacle_avoidance when it builds the real command.)
+        """
         try:
-            if x != 0.0 or y != 0.0 or z != 0.0:
-                _ = gen_mov_command(
-                    round(x, 2), 
-                    round(y, 2), 
-                    round(z, 2), 
-                    obstacle_avoidance
-                )
-                self.controller.send_movement_command(robot_id, x, y, z)
+            self.controller.send_movement_command(robot_id, x, y, z)
         except Exception as e:
             logger.error(f"Error handling cmd_vel: {e}")
 

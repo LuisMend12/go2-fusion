@@ -67,7 +67,16 @@ def update_meshes_for_cloud2(
 
 class LidarDecoder:
     """Original WASM-based LiDAR decoder - the working implementation"""
-    
+
+    # Size the `input` WASM buffer is actually malloc'd for (see __init__).
+    # A compressed payload larger than this must be rejected before being
+    # written in - add_value_arr's own bounds check validates against the
+    # WASM module's entire linear memory, not this specific buffer's
+    # reserved region, so an oversized-but-still-heap-sized payload would
+    # otherwise silently overwrite whatever was malloc'd right after it
+    # (decompressBuffer, positions, uvs, ...) instead of being rejected.
+    INPUT_BUFFER_SIZE = 61440
+
     def __init__(self) -> None:
         config = Config()
         config.wasm_multi_value = True
@@ -108,7 +117,7 @@ class LidarDecoder:
         self.HEAPF32 = (ctypes.c_float * (self.memory_size // 4)).from_address(self.buffer_ptr)
         self.HEAPF64 = (ctypes.c_double * (self.memory_size // 8)).from_address(self.buffer_ptr)
 
-        self.input = self.malloc(self.store, 61440)
+        self.input = self.malloc(self.store, self.INPUT_BUFFER_SIZE)
         self.decompressBuffer = self.malloc(self.store, 80000)
         self.positions = self.malloc(self.store, 2880000)
         self.uvs = self.malloc(self.store, 1920000)
@@ -157,6 +166,11 @@ class LidarDecoder:
 
     def decode(self, compressed_data, data):
         """Original decode method that actually works with the WASM module"""
+        if len(compressed_data) > self.INPUT_BUFFER_SIZE:
+            raise ValueError(
+                f"compressed_data is {len(compressed_data)} bytes, exceeds "
+                f"the {self.INPUT_BUFFER_SIZE}-byte input buffer"
+            )
         self.add_value_arr(self.input, compressed_data)
 
         some_v = math.floor(data["origin"][2] / data["resolution"])

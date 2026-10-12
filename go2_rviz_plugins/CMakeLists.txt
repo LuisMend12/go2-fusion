@@ -8,9 +8,6 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Panels use Qt signals/slots (Q_OBJECT), so headers need to go through moc.
-set(CMAKE_AUTOMOC ON)
-
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)

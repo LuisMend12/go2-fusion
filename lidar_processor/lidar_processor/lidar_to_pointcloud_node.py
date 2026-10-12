@@ -7,13 +7,16 @@ LiDAR to PointCloud Node
 Enhanced LiDAR data processing node with better architecture and performance.
 """
 
-from typing import List, Set, Tuple
+import itertools
+import os
+from typing import Dict, List, Tuple
 from dataclasses import dataclass
 from threading import Lock
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 import open3d as o3d
@@ -28,17 +31,26 @@ class LidarConfig:
     save_interval: float = 10.0  # seconds
     max_points: int = 1000000    # Maximum points to keep in memory
     voxel_size: float = 0.01     # Voxel downsampling size
+    publish_rate: float = 5.0    # Hz, independent of incoming scan rate
 
 
 class PointCloudAggregator:
     """Thread-safe point cloud aggregation with memory management"""
-    
+
     def __init__(self, config: LidarConfig):
         self.config = config
-        self.points: Set[Tuple[float, float, float]] = set()
+        # dict preserves insertion order, giving O(1) dedup *and* a cheap
+        # way to evict the actually-oldest points once over the cap. The
+        # previous approach sorted by distance from the world origin and
+        # kept only the closest max_points - meaning any point farther from
+        # (0,0,0) than the current farthest kept point was permanently
+        # dropped once the cap was first hit, silently capping the usable
+        # mapped area well short of max_points for any exploration that
+        # moves away from the start position.
+        self.points: Dict[Tuple[float, float, float], None] = {}
         self._lock = Lock()
         self._points_changed = False
-        
+
     def add_points(self, new_points: List[Tuple[float, float, float]]) -> None:
         """Add new points to the aggregated cloud"""
         with self._lock:
@@ -46,24 +58,25 @@ class PointCloudAggregator:
                 # Round points to reduce memory usage
                 rounded_point = (
                     round(point[0], 3),
-                    round(point[1], 3), 
+                    round(point[1], 3),
                     round(point[2], 3)
                 )
-                self.points.add(rounded_point)
-            
-            # Memory management - remove oldest points if exceeding limit
-            if len(self.points) > self.config.max_points:
-                # Convert to list, sort by distance from origin, keep closest points
-                points_list = list(self.points)
-                points_list.sort(key=lambda p: p[0]**2 + p[1]**2 + p[2]**2)
-                self.points = set(points_list[:self.config.max_points])
-            
+                self.points[rounded_point] = None
+
+            # Memory management - evict the oldest-inserted points once
+            # over the limit (a point seen again isn't re-ordered, since
+            # this bounds memory rather than tracking freshness).
+            overflow = len(self.points) - self.config.max_points
+            if overflow > 0:
+                for key in list(itertools.islice(self.points.keys(), overflow)):
+                    del self.points[key]
+
             self._points_changed = True
-    
+
     def get_points_copy(self) -> List[Tuple[float, float, float]]:
         """Get a thread-safe copy of current points"""
         with self._lock:
-            return list(self.points)
+            return list(self.points.keys())
     
     def has_changes(self) -> bool:
         """Check if points have changed since last check"""
@@ -102,27 +115,48 @@ class LidarToPointCloudNode(Node):
         )
         
         # Setup subscriptions and publishers
+        self._last_header = None
         self._setup_subscriptions()
         self._setup_publishers()
-        
+
         # Setup timers
         if self.config.save_map:
             self.save_timer = self.create_timer(
-                self.config.save_interval, 
+                self.config.save_interval,
                 self._save_map_callback
             )
+        # Publishing on its own timer, independent of the incoming scan
+        # rate, so the full aggregated cloud (up to max_points) isn't
+        # copied/serialized/published once per incoming scan - that cost
+        # grows as the map fills toward max_points during a long mapping
+        # session.
+        self.publish_timer = self.create_timer(
+            1.0 / self.config.publish_rate,
+            self._publish_timer_callback
+        )
         
         # Log configuration
         self._log_configuration()
     
     def _declare_parameters(self) -> None:
         """Declare all node parameters"""
-        self.declare_parameter('robot_ip_lst', [])
+        # An empty-list default leaves rclpy unable to infer the array
+        # element type, so a later attempt to actually set this parameter
+        # to a real string list (e.g. from the launch file) was rejected
+        # outright as a type mismatch ("expecting type 'BYTE_ARRAY'") -
+        # crashing this node on every single launch. An explicit
+        # STRING_ARRAY descriptor removes the ambiguity.
+        self.declare_parameter(
+            'robot_ip_lst',
+            value=None,
+            descriptor=ParameterDescriptor(type=ParameterType.PARAMETER_STRING_ARRAY)
+        )
         self.declare_parameter('map_name', '3d_map')
         self.declare_parameter('map_save', 'true')
         self.declare_parameter('save_interval', 10.0)
         self.declare_parameter('max_points', 1000000)
         self.declare_parameter('voxel_size', 0.01)
+        self.declare_parameter('publish_rate', 5.0)
     
     def _load_configuration(self) -> LidarConfig:
         """Load configuration from parameters"""
@@ -132,20 +166,32 @@ class LidarToPointCloudNode(Node):
         save_interval = self.get_parameter('save_interval').get_parameter_value().double_value
         max_points = self.get_parameter('max_points').get_parameter_value().integer_value
         voxel_size = self.get_parameter('voxel_size').get_parameter_value().double_value
-        
+        publish_rate = self.get_parameter('publish_rate').get_parameter_value().double_value
+
         return LidarConfig(
             robot_ip_list=robot_ip_lst,
             map_name=map_name,
             save_map=save_map_str.lower() == 'true',
             save_interval=save_interval,
             max_points=max_points,
-            voxel_size=voxel_size
+            voxel_size=voxel_size,
+            publish_rate=publish_rate
         )
-    
+
     def _setup_subscriptions(self) -> None:
         """Setup LiDAR data subscriptions"""
-        self.subscriptions = []
-        
+        # Not self.subscriptions: rclpy.node.Node already exposes a
+        # read-only `subscriptions` property backed by its own internal
+        # list (used by destroy_node() for cleanup), so assigning a plain
+        # list to that name collides with it.
+        self._lidar_subscriptions = []
+
+        if not self.config.robot_ip_list:
+            self.get_logger().warn(
+                "robot_ip_lst is empty; not subscribing to any lidar topic."
+            )
+            return
+
         if len(self.config.robot_ip_list) == 1:
             # Single robot mode
             subscription = self.create_subscription(
@@ -154,7 +200,7 @@ class LidarToPointCloudNode(Node):
                 self._lidar_callback,
                 self.qos_profile
             )
-            self.subscriptions.append(subscription)
+            self._lidar_subscriptions.append(subscription)
         else:
             # Multi-robot mode
             for i, _ in enumerate(self.config.robot_ip_list):
@@ -164,7 +210,7 @@ class LidarToPointCloudNode(Node):
                     self._lidar_callback,
                     self.qos_profile
                 )
-                self.subscriptions.append(subscription)
+                self._lidar_subscriptions.append(subscription)
     
     def _setup_publishers(self) -> None:
         """Setup publishers for processed data"""
@@ -188,13 +234,17 @@ class LidarToPointCloudNode(Node):
             
             # Add to aggregator
             self.aggregator.add_points(points)
-            
-            # Publish aggregated point cloud
-            self._publish_aggregated_pointcloud(msg.header)
-            
+            self._last_header = msg.header
+
         except Exception as e:
             self.get_logger().error(f"Error processing LiDAR data: {e}")
-    
+
+    def _publish_timer_callback(self) -> None:
+        """Publish the aggregated cloud at a fixed rate, decoupled from the
+        incoming scan rate."""
+        if self._last_header is not None:
+            self._publish_aggregated_pointcloud(self._last_header)
+
     def _publish_aggregated_pointcloud(self, header) -> None:
         """Publish aggregated point cloud"""
         try:
@@ -223,8 +273,11 @@ class LidarToPointCloudNode(Node):
             if self.config.voxel_size > 0:
                 point_cloud = point_cloud.voxel_down_sample(self.config.voxel_size)
             
-            # Save to file
-            map_filename = f"{self.config.map_name}.ply"
+            # Save to file. Resolved to an absolute path so where it lands
+            # doesn't depend on the process's current working directory,
+            # and the directory is created if it doesn't exist yet.
+            map_filename = os.path.abspath(f"{self.config.map_name}.ply")
+            os.makedirs(os.path.dirname(map_filename), exist_ok=True)
             if o3d.io.write_point_cloud(map_filename, point_cloud):
                 point_count = len(point_cloud.points)
                 total_points = self.aggregator.get_point_count()
@@ -246,6 +299,7 @@ class LidarToPointCloudNode(Node):
         self.get_logger().info(f"   Robot IPs: {self.config.robot_ip_list}")
         self.get_logger().info(f"   Map name: {self.config.map_name}")
         self.get_logger().info(f"   Save map: {self.config.save_map}")
+        self.get_logger().info(f"   Publish rate: {self.config.publish_rate} Hz")
         if self.config.save_map:
             self.get_logger().info(f"   Save interval: {self.config.save_interval}s")
             self.get_logger().info(f"   Max points: {self.config.max_points:,}")

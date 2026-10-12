@@ -45,16 +45,31 @@ def main(args=None):
 
     node = SitController()
 
+    # ROS2 pub/sub gives no delivery guarantee to a not-yet-connected
+    # subscriber, so publishing immediately and just hoping a fixed 1s
+    # wait was enough risked silently dropping the command if the
+    # driver's /webrtc_req bridge wasn't up yet. Wait for an actual
+    # subscriber instead, capped by a timeout so this doesn't hang
+    # forever if the driver is down.
+    timeout_sec = 5.0
+    wait_start = node.get_clock().now()
+    while (
+        node.publisher.get_subscription_count() == 0
+        and (node.get_clock().now() - wait_start).nanoseconds / 1e9 < timeout_sec
+    ):
+        rclpy.spin_once(node, timeout_sec=0.1)
+
+    if node.publisher.get_subscription_count() == 0:
+        node.get_logger().warn(
+            f"No subscriber on /webrtc_req after waiting {timeout_sec:.0f}s; "
+            "sending SIT anyway, but it will likely be dropped."
+        )
+
     # Send the command once
     node.sit()
 
-    # Keep the node alive briefly so ROS can actually transmit it
-    node.create_timer(1.0, lambda: rclpy.shutdown())
-
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+    # Give the message a brief moment to actually go out before exiting.
+    rclpy.spin_once(node, timeout_sec=0.5)
 
     node.destroy_node()
 
