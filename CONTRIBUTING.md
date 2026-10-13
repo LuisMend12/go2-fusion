@@ -7,8 +7,8 @@ Using an AI coding agent? It picks up the same rules from [AGENTS.md](AGENTS.md)
 ## One-time setup
 
 ```shell
-git clone --recursive git@github.com:LuisMend12/go2_ros2_sdk.git
-cd go2_ros2_sdk/docker
+git clone --recursive git@github.com:maxhawksby/go2-fusion.git
+cd go2-fusion/docker
 docker compose build
 ```
 
@@ -21,10 +21,17 @@ The first build takes a while (it downloads ROS packages, PyTorch and Open3D). A
 
 ```shell
 cd docker
-ROBOT_IP=192.168.50.150 CONN_TYPE=webrtc docker compose up --build
+ROBOT_IP=192.168.50.150 CONN_TYPE=webrtc docker compose up
 ```
 
-`--build` costs nothing unless a dependency changed. On start the container builds the workspace (a few seconds after the first run), then launches `robot.launch.py`.
+On start the container builds the workspace incrementally, then launches `robot.launch.py`. Run `docker compose build` only after a dependency changes.
+
+If you updated from the older root-level package layout, recreate the container so Compose applies the new `src/` mount. This uses the existing image:
+
+```shell
+docker compose down
+docker compose up -d
+```
 
 Open a shell inside the running container from another terminal:
 
@@ -34,7 +41,7 @@ docker compose exec unitree_ros bash
 
 ## The edit loop
 
-Your repo folder is mounted into the container at `/ros2_ws/src`. Edit files on your machine as usual; the container sees the change immediately.
+Your repo's `src/` folder is mounted into the container at `/ros2_ws/src`. Edit files on your machine as usual; the container sees the change immediately.
 
 | What you changed | What to do |
 | --- | --- |
@@ -73,6 +80,6 @@ If the build ever gets into a strange state, `docker compose down -v` deletes th
 
 ## Design rules
 
-- **Extend before adding.** Before creating a new node or topic, check whether an existing one should own it. Robot commands go on `/webrtc_req`, speech on `/tts`. Motion goes on a twist_mux input: each drive source has its own (`/cmd_vel_joy`, `/cmd_vel_keyboard`, `/cmd_vel` for Nav2, `/cmd_vel_agent`, `/cmd_vel_object_nav`; see `go2_robot_sdk/config/twist_mux.yaml`), so a new one gets a new input rather than sharing.
+- **Extend before adding.** Before creating a new node or topic, check whether an existing one should own it. Robot commands go on `/webrtc_req`, speech on `/tts`. Motion goes on a twist_mux input: each drive source has its own (`/cmd_vel_joy`, `/cmd_vel_keyboard`, `/cmd_vel` for Nav2, `/cmd_vel_agent`, `/cmd_vel_object_nav`; see `src/go2_robot_sdk/config/twist_mux.yaml`), so a new one gets a new input rather than sharing.
 - **One ROS 2 distro for everyone:** Humble.
 - **Test without the robot first.** There is one dog and it accepts one connection at a time. Check what your code sends with `ros2 topic echo /cmd_vel_keyboard` (or whichever topic you publish), and save lab time for the final check.

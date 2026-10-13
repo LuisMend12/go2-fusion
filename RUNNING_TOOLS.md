@@ -16,7 +16,7 @@ docker compose -f docker-compose.windows.yml exec unitree_ros bash -ic "ros2 run
 ```
 
 Controls: `W`/`S` forward-back, `A`/`D` turn, `Q`/`E` strafe, `Z`/`X` speed
-down/up, `Space` stop, `Esc` quit. Full details: [keyboard_teleop/README.md](keyboard_teleop/README.md).
+down/up, `Space` stop, `Esc` quit. Full details: [keyboard_teleop/README.md](src/keyboard_teleop/README.md).
 
 ## Map visualizers (C++ and Julia)
 
@@ -47,7 +47,7 @@ docker compose up -d
 ```shell
 docker compose exec unitree_ros bash -ic "ros2 run go2_map_viewer_cpp map_viewer_node"
 ```
-Details: [go2_map_viewer_cpp/README.md](go2_map_viewer_cpp/README.md).
+Details: [go2_map_viewer_cpp/README.md](src/go2_map_viewer_cpp/README.md).
 
 **Julia viewer** — read-only map heatmap with an approximate robot marker.
 Start `rosbridge_server` first (not started automatically), then the
@@ -74,4 +74,4 @@ physically present and watching the robot:
 ```shell
 docker compose exec unitree_ros bash -ic "ros2 run go2_auto_mapper explorer"
 ```
-Details: [go2_auto_mapper/README.md](go2_auto_mapper/README.md).
+Details: [go2_auto_mapper/README.md](src/go2_auto_mapper/README.md).

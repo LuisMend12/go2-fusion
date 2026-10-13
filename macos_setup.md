@@ -23,7 +23,7 @@ Oak -> WebRTC driver in Docker -> camera / LiDAR / odometry ROS topics
                                           Mac screen
 ```
 
-Your Mac edits the repository. Docker sees that same folder at `/ros2_ws/src`.
+Your Mac edits the repository. Docker mounts its `src/` folder at `/ros2_ws/src`.
 Build output lives in separate named Docker volumes, not in your source folder.
 Stop nodes before switching branches: running Python nodes can otherwise see a
 mixture of old and new code.

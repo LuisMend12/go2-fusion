@@ -1,14 +1,14 @@
 # Mac-only dependency image. Keep the team's docker/Dockerfile unchanged.
 # Uses the same requirements.txt, package.xml files, entrypoint and aliases.
 # Development image: holds only the dependencies. The source is not baked in;
-# docker compose mounts the repo at /ros2_ws/src and entrypoint.sh builds it
+# docker compose mounts the repo's src/ folder at /ros2_ws/src and entrypoint.sh builds it
 # incrementally on start, so code changes never need an image rebuild.
 
 # Collect just the package.xml files, keeping their directory layout. rosdep
 # only reads these, and copying them (instead of the whole tree) into the main
 # stage means the slow rosdep layer reruns only when a dependency changes.
 FROM ros:humble-ros-base AS manifests
-COPY . /src
+COPY src /src
 RUN mkdir /manifests && cd /src && \
     find . -name package.xml -not -path '*/external_lib/*' \
       -exec cp --parents {} /manifests \;

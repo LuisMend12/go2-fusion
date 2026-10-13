@@ -14,7 +14,7 @@ The upstream README assumes Ubuntu; this file covers what differs on Windows.
 
 ```powershell
 cd "G:\broswer download\go2_ros2_sdk"
-git submodule update --init --recursive      # pulls go2_robot_sdk/external_lib/aioice
+git submodule update --init --recursive      # pulls src/go2_robot_sdk/external_lib/aioice
 cd docker
 docker compose -f docker-compose.windows.yml build   # slow the first time only (ROS packages, torch, open3d)
 ```
