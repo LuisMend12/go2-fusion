@@ -6,6 +6,8 @@ This is a ROS 2 Humble workspace for a Unitree Go2 robot dog, worked on by a 5-p
 
 ## Packages
 
+All ROS packages live under `src/`.
+
 | Package | What it is |
 | --- | --- |
 | `go2_robot_sdk` | The driver node (WebRTC/CycloneDDS connection to the robot) and all launch files |
@@ -50,7 +52,7 @@ On Windows hosts, add `-f docker-compose.windows.yml` to every `docker compose` 
 ## Design rules
 
 - **Extend before adding.** AI agents tend to add a new node or topic per feature, which sprawls the ROS graph. Before creating one, check whether an existing node should own the behavior or an existing topic already carries the data. Say why if you still add one.
-  - Motion: publish `geometry_msgs/Twist` on your source's own twist_mux input; twist_mux forwards the highest-priority active one to the driver. Inputs (`go2_robot_sdk/config/twist_mux.yaml`, priority high to low): `/cmd_vel_joy` 10, `/cmd_vel_keyboard` 9, `/cmd_vel` 5 (Nav2), `/cmd_vel_agent` 4, `/cmd_vel_object_nav` 3. A new drive source gets its own input there rather than sharing one, or sources overwrite each other.
+  - Motion: publish `geometry_msgs/Twist` on your source's own twist_mux input; twist_mux forwards the highest-priority active one to the driver. Inputs (`src/go2_robot_sdk/config/twist_mux.yaml`, priority high to low): `/cmd_vel_joy` 10, `/cmd_vel_keyboard` 9, `/cmd_vel` 5 (Nav2), `/cmd_vel_agent` 4, `/cmd_vel_object_nav` 3. A new drive source gets its own input there rather than sharing one, or sources overwrite each other.
   - Robot API commands (sit, stand, modes): `/webrtc_req`.
   - Speech: `/tts`.
   - Sensors from the driver: `/odom`, `/imu`, `/joint_states`, `/point_cloud2`, `/scan`, `/camera/image_raw`, `/go2_states`.

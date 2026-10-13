@@ -17,7 +17,9 @@ services:
       COLCON_DEFAULTS_FILE: /etc/colcon.mac.yaml
       CMAKE_BUILD_PARALLEL_LEVEL: "2"
     volumes:
-      - ../..:/ros2_ws/src
+      - ../../src:/ros2_ws/src
+      - ../../go2_map_viewer_julia:/ros2_ws/src/go2_map_viewer_julia
+      - ./rviz-sensors.rviz:/ros2_ws/mac/rviz-sensors.rviz:ro
       - ros2_build:/ros2_ws/build
       - ros2_install:/ros2_ws/install
       - ros2_log:/ros2_ws/log

@@ -26,7 +26,7 @@ The first run downloads the Whisper `base` model (about 150 MB), so it needs int
 ## Run
 
 1. Start the stack and the speech bridge inside the container:
-   `ros2 run go2_llm_agent speech_bridge` (see [go2_llm_agent/README.md](../../go2_llm_agent/README.md)).
+   `ros2 run go2_llm_agent speech_bridge` (see [go2_llm_agent/README.md](../../src/go2_llm_agent/README.md)).
    It listens on port 8000; the compose file uses host networking, so `localhost:8000`
    reaches it on Linux/WSL. On Docker Desktop for Windows, also publish port 8000 in
    `docker-compose.windows.yml`.

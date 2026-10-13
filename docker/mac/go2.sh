@@ -21,7 +21,7 @@ case "$action" in
     shell) "${compose[@]}" exec unitree_ros bash ;;
     rviz) "${compose[@]}" exec unitree_ros bash -ic '
         if [ ! -f /root/.rviz2/fusion-sensors.rviz ]; then
-            cp /ros2_ws/src/docker/mac/rviz-sensors.rviz /root/.rviz2/fusion-sensors.rviz
+            cp /ros2_ws/mac/rviz-sensors.rviz /root/.rviz2/fusion-sensors.rviz
         fi
         exec mac-gui rviz2 -d /root/.rviz2/fusion-sensors.rviz' ;;
     rebuild)

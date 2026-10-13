@@ -12,7 +12,7 @@ Oak can answer out loud and describe what its camera sees.
 
 ## Facts established (don't re-derive)
 
-- Riley's agent (`go2_llm_agent/`, about 540 lines) uses GPT-4o-mini through LangChain and LangGraph. Its flow: the host mic
+- Riley's agent (`src/go2_llm_agent/`, about 540 lines) uses GPT-4o-mini through LangChain and LangGraph. Its flow: the host mic
   tool (`host_tools/speech_to_text/vad_listen.py`, faster-whisper) POSTs `{"text"}` to FastAPI `:8000/command`, a planner
   LLM call writes every step up front, then one more LLM call per step picks a tool.
 - Bugs confirmed by reading the code (not run):
@@ -65,7 +65,7 @@ Oak can answer out loud and describe what its camera sees.
    - Patch `object_navigation` (about 5 lines) so `"stop"` cancels.
    - `describe_scene` sends one 640 px JPEG frame.
 7. [ ] Voice: keep Riley's host mic tool, and stop its 5 s POST timeout from reporting a false failure. Document the
-   end-to-end run in `go2_llm_agent/README.md`.
+   end-to-end run in `src/go2_llm_agent/README.md`.
 8. [ ] Tests:
    - Offline: the keyword-mock suite, no key needed.
    - Docker: simulated twist_mux check (pattern: the gamepad test from 2026-10-08) proving the agent yields to keyboard
