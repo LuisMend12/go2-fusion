@@ -19,7 +19,7 @@ ROS 2 through `rosbridge_server` (JSON over WebSocket).
 - A display. Same rule as the C++ viewer: WSLg, or the Linux compose file
   which forwards X11. It will not open under
   `docker/docker-compose.windows.yml`. Use Foxglove there; see
-  [WINDOWS_SETUP.md](../WINDOWS_SETUP.md).
+  [WINDOWS_SETUP.md](../docs/WINDOWS_SETUP.md).
 
 The first launch compiles GLMakie. That can take several minutes and looks
 idle. Later launches are quick.

@@ -24,8 +24,8 @@ If you are using WebRTC (Wi-Fi) protocol, close the connection with a mobile app
 > On top of the upstream packages it adds `keyboard_teleop`, `go2_auto_mapper`, `go2_map_viewer_cpp`,
 > `go2_map_viewer_julia`, `go2_rviz_plugins` (RViz panels), `front_leg_controller`, and from Riley:
 > `object_detection` (YOLOv8), `object_navigation`, `go2_llm_agent` and the host-side
-> `host_tools/speech_to_text`. See [FUSION.md](FUSION.md) for what came from where and why,
-> [AGENTS.md](AGENTS.md) for the package and topic list, and [USEFUL_COMMANDS.md](USEFUL_COMMANDS.md) for a cheat sheet.
+> `host_tools/speech_to_text`. See [FUSION.md](docs/FUSION.md) for what came from where and why,
+> [AGENTS.md](AGENTS.md) for the package and topic list, and [USEFUL_COMMANDS.md](docs/USEFUL_COMMANDS.md) for a cheat sheet.
 
 
 ## Project RoadMap:
@@ -137,7 +137,7 @@ Windows PowerShell (Docker Desktop and WSL2 on Windows 11; the extra flags pass 
 docker compose -f docker-compose.windows.yml run --rm -e DISPLAY=:0 -e WAYLAND_DISPLAY=wayland-0 -e XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir -v /run/desktop/mnt/host/wslg/.X11-unix:/tmp/.X11-unix -v /run/desktop/mnt/host/wslg:/mnt/wslg unitree_ros rviz2 -d /ros2_ws/src/go2_robot_sdk/config/single_robot_conf.rviz
 ```
 
-On Linux and in WSL2, `docker compose up` starts RViz along with the full robot stack. More rviz commands are in [USEFUL_COMMANDS.md](USEFUL_COMMANDS.md#rviz).
+On Linux and in WSL2, `docker compose up` starts RViz along with the full robot stack. More rviz commands are in [USEFUL_COMMANDS.md](docs/USEFUL_COMMANDS.md#rviz).
 
 ## Usage
 

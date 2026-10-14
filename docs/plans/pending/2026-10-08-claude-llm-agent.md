@@ -71,7 +71,7 @@ Oak can answer out loud and describe what its camera sees.
    - Docker: simulated twist_mux check (pattern: the gamepad test from 2026-10-08) proving the agent yields to keyboard
      and gamepad.
    - Docker: a live Claude call with Max's key.
-9. [ ] FUSION.md row plus a PR. Robot test at ISL: on a stand first, then on the floor at low speed.
+9. [ ] `docs/FUSION.md` row plus a PR. Robot test at ISL: on a stand first, then on the floor at low speed.
 
 ## Decisions for Max
 

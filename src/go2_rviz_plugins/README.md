@@ -24,7 +24,7 @@ Three RViz panels, loaded as plugins rather than run as separate apps:
 
 ## Adding the panels in RViz
 
-1. Build the package (see [AGENTS.md](../AGENTS.md) — `cbs go2_rviz_plugins`
+1. Build the package (see [AGENTS.md](../../AGENTS.md) — `cbs go2_rviz_plugins`
    inside the container, or it's picked up by a full workspace build).
 2. In RViz: **Panels menu → Add New Panel**.
 3. Pick `go2_rviz_plugins` → `MapViewer`, `AutoMapper`, and/or

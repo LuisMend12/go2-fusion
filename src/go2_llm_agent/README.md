@@ -7,11 +7,11 @@ robot actions, then runs each step.
 Written by Riley Francis in [ROS2-LLM-Nav](https://github.com/RileyFrancis/ROS2-LLM-Nav).
 
 > **Being rebuilt on Claude: this package does not run in the Docker image yet.** It was
-> brought in as-is (only its drive topic and sit message were changed; see [FUSION.md](../FUSION.md)).
+> brought in as-is (only its drive topic and sit message were changed; see [FUSION.md](../../docs/FUSION.md)).
 > Its OpenAI pip dependencies (`requirements.txt`: langchain, langgraph, fastapi, ...) are
 > deliberately **not** installed in the image. It builds with colcon, but `ros2 run` fails
 > on the missing imports until the Claude rebuild lands
-> ([plan](../docs/plans/pending/2026-10-08-claude-llm-agent.md)).
+> ([plan](../../docs/plans/pending/2026-10-08-claude-llm-agent.md)).
 
 ## Modules
 
@@ -73,7 +73,7 @@ curl -X POST http://localhost:8000/command -H "Content-Type: application/json" \
   -d '{"text":"walk forward for one second"}'
 ```
 
-For voice, run [host_tools/speech_to_text](../host_tools/speech_to_text/README.md) on the
+For voice, run [host_tools/speech_to_text](../../host_tools/speech_to_text/README.md) on the
 host. For speech out, start `ros2 run speech_processor tts_node` with an ElevenLabs key.
 
 Live mode safety: start with tiny moves ("walk forward for half a second"), in an open

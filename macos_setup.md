@@ -1,7 +1,7 @@
 # macOS setup
 
-Use this guide on a Mac. Windows and WSL users keep using `WINDOWS_SETUP.md`
-and `RUNNING_IN_WSL.md`. All Mac configuration is in `docker/mac/`; the existing
+Use this guide on a Mac. Windows and WSL users keep using `docs/WINDOWS_SETUP.md`
+and `docs/RUNNING_IN_WSL.md`. All Mac configuration is in `docker/mac/`; the existing
 Dockerfile, Compose files, dependencies and robot code remain shared and unchanged.
 
 ## Understand the three separate steps

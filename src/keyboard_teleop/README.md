@@ -73,4 +73,4 @@ colcon build --packages-select keyboard_teleop
 
 **Docker:** nothing to rebuild. The repo is mounted into the container and
 built with `--symlink-install`, so just quit (`Esc`) and rerun `teleop`.
-See [CONTRIBUTING.md](../CONTRIBUTING.md#the-edit-loop).
+See [CONTRIBUTING.md](../../CONTRIBUTING.md#the-edit-loop).
