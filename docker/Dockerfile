@@ -1,12 +1,12 @@
 # Development image: holds only the dependencies. The source is not baked in;
-# docker compose mounts the repo at /ros2_ws/src and entrypoint.sh builds it
+# docker compose mounts the repo's src/ folder at /ros2_ws/src and entrypoint.sh builds it
 # incrementally on start, so code changes never need an image rebuild.
 
 # Collect just the package.xml files, keeping their directory layout. rosdep
 # only reads these, and copying them (instead of the whole tree) into the main
 # stage means the slow rosdep layer reruns only when a dependency changes.
 FROM ros:humble-ros-base AS manifests
-COPY . /src
+COPY src /src
 RUN mkdir /manifests && cd /src && \
     find . -name package.xml -not -path '*/external_lib/*' \
       -exec cp --parents {} /manifests \;
@@ -71,6 +71,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://install.julialang.org | sh -s -- --yes
 ENV PATH="/root/.juliaup/bin:${PATH}"
+# Pinned to match go2_map_viewer_julia/Manifest.toml's julia_version - an
+# unpinned install otherwise lets a future rebuild silently pick up
+# whatever Julia version juliaup's "release" channel resolves to at build
+# time, which can drift from the committed Manifest.toml.
+RUN juliaup add 1.13.1 && juliaup default 1.13.1
 
 COPY go2_map_viewer_julia/Project.toml go2_map_viewer_julia/Manifest.toml \
     /opt/go2_map_viewer_julia/

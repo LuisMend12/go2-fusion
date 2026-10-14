@@ -1,0 +1,43 @@
+# Standalone Mac configuration; do not combine it with the Windows/WSL files.
+name: go2-fusion-mac
+services:
+  unitree_ros:
+    build:
+      context: ../..
+      dockerfile: docker/mac/Dockerfile
+    environment:
+      ROS_DISTRO: humble
+      CONN_TYPE: webrtc
+      ROBOT_IP: ${ROBOT_IP:-}
+      ROBOT_AES_KEY: ${ROBOT_AES_KEY:-}
+      DISPLAY: host.docker.internal:0
+      XAUTHORITY: /run/go2-xauth/Xauthority
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      QT_X11_NO_MITSHM: "1"
+      COLCON_DEFAULTS_FILE: /etc/colcon.mac.yaml
+      CMAKE_BUILD_PARALLEL_LEVEL: "2"
+    volumes:
+      - ../../src:/ros2_ws/src
+      - ../../go2_map_viewer_julia:/ros2_ws/src/go2_map_viewer_julia
+      - ./rviz-sensors.rviz:/ros2_ws/mac/rviz-sensors.rviz:ro
+      - ros2_build:/ros2_ws/build
+      - ros2_install:/ros2_ws/install
+      - ros2_log:/ros2_ws/log
+      - rviz_config:/root/.rviz2
+      - type: bind
+        source: ${GO2_MAC_XAUTH_DIR:-${HOME}/Library/Caches/go2-fusion/xauth}
+        target: /run/go2-xauth
+        read_only: true
+        bind:
+          create_host_path: false
+    # GUI and ROS nodes share Linux networking inside this container.
+    # The entrypoint builds the workspace, then waits. No robot connection starts.
+    command: ["sleep", "infinity"]
+    shm_size: 1g
+    init: true
+    restart: "no"
+volumes:
+  ros2_build:
+  ros2_install:
+  ros2_log:
+  rviz_config:
