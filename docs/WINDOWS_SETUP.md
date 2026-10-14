@@ -20,7 +20,7 @@ docker compose -f docker-compose.windows.yml build   # slow the first time only 
 ```
 
 The image holds only the dependencies. Your checkout is mounted into the container and built when it
-starts, so editing code never needs an image rebuild. See [CONTRIBUTING.md](CONTRIBUTING.md) for the edit loop.
+starts, so editing code never needs an image rebuild. See [CONTRIBUTING.md](../CONTRIBUTING.md) for the edit loop.
 
 ## Run
 
@@ -42,12 +42,12 @@ docker compose -f docker-compose.windows.yml down
 
 ### Why a separate compose file
 
-[docker/docker-compose.yml](docker/docker-compose.yml) targets Linux hosts. On Windows:
+[docker/docker-compose.yml](../docker/docker-compose.yml) targets Linux hosts. On Windows:
 - `devices: /dev/input` (joystick) does not exist
 - the X11 socket and `~/.Xauthority` mounts do not apply (RViz cannot display)
 - `network_mode: host` attaches to Docker's Linux VM, not your Windows adapter, so published ports such as Foxglove's 8765 are unreachable
 
-[docker/docker-compose.windows.yml](docker/docker-compose.windows.yml) drops those and publishes port 8765 instead.
+[docker/docker-compose.windows.yml](../docker/docker-compose.windows.yml) drops those and publishes port 8765 instead.
 `ROBOT_IP` defaults to `192.168.50.150` and `CONN_TYPE` to `webrtc`; override with
 `$env:ROBOT_IP="..."; $env:CONN_TYPE="..."` before `up`.
 

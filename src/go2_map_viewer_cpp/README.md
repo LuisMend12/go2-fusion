@@ -17,7 +17,7 @@ the camera or the point cloud.
   file (`docker/docker-compose.yml`) forwards X11. The Windows compose file
   (`docker/docker-compose.windows.yml`) has no display, so this window
   cannot open there. Use Foxglove for that setup; see
-  [WINDOWS_SETUP.md](../WINDOWS_SETUP.md).
+  [WINDOWS_SETUP.md](../../docs/WINDOWS_SETUP.md).
 
 SFML comes from the `sfml-dev` rosdep key in `package.xml`. The Docker image
 and `rosdep install --from-paths src --ignore-src -y` install it. Do not

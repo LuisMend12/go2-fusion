@@ -4,7 +4,7 @@ Finds objects in the robot's camera feed with YOLOv8 (the small "nano" model) an
 short memory of where they are, so other nodes can ask "where is `chair_1`?".
 
 Written by Riley Francis in [ROS2-LLM-Nav](https://github.com/RileyFrancis/ROS2-LLM-Nav).
-See [FUSION.md](../FUSION.md) for what changed when it was brought into this repo.
+See [FUSION.md](../../docs/FUSION.md) for what changed when it was brought into this repo.
 
 ## Run
 
