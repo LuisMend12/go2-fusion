@@ -37,6 +37,9 @@ class FrontierExplorer(Node):
 
         self.declare_parameter('min_frontier_size', 5)
         self.declare_parameter('goal_distance', 0.8)
+        # Frontiers closer than this are only used once no farther one is
+        # left, so each leg covers new ground instead of shuffling in place.
+        self.declare_parameter('min_goal_distance', 1.5)
 
         # A full turn in place gives SLAM a 360 degree lidar view, so it can
         # place the robot on the map before (and after) each leg of exploring.
@@ -64,6 +67,8 @@ class FrontierExplorer(Node):
         self.goal_distance = self.get_parameter(
             'goal_distance'
         ).value
+
+        self.min_goal_distance = self.get_parameter('min_goal_distance').value
 
         self.scan_after_goal = self.get_parameter('scan_after_goal').value
         self.scan_yaw = self.get_parameter('scan_yaw').value
@@ -124,7 +129,9 @@ class FrontierExplorer(Node):
         # (x, y) -> time.monotonic() of goals Nav2 rejected or failed,
         # so we don't immediately re-select the same bad spot forever.
         self.failed_goals = []
-        self.failed_goal_cooldown_sec = 30.0
+        # Longer than a few failed attempts (~25 s each), or the same handful
+        # of nearby spots just rotate through the list.
+        self.failed_goal_cooldown_sec = 120.0
         self.failed_goal_radius = 0.5
 
         # If Nav2 accepts a goal but then never reports a result (e.g. the
@@ -457,23 +464,30 @@ class FrontierExplorer(Node):
                 0.02 * len(frontier)
             )
 
+            is_far = (
+                math.hypot(goal_x - robot_x, goal_y - robot_y)
+                >= self.min_goal_distance
+            )
+
             candidates.append(
                 (
                     score,
                     goal_x,
                     goal_y,
-                    len(frontier)
+                    len(frontier),
+                    is_far
                 )
             )
 
         if not candidates:
             return None
 
-        candidates.sort(
-            key=lambda x: x[0]
-        )
+        far = [c for c in candidates if c[4]]
+        pool = far if far else candidates
 
-        return candidates[0]
+        best = min(pool, key=lambda c: c[0])
+
+        return best[:4]
 
     # ==========================================================
     # SEND NAVIGATION GOAL

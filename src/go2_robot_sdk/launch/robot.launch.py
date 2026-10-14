@@ -171,7 +171,12 @@ class Go2NodeFactory:
                 ],
                 parameters=[{
                     'target_frame': 'base_link',
-                    'max_height': 0.5
+                    'max_height': 0.5,
+                    # The lidar sees the robot's own body. Without this, SLAM
+                    # maps those points as walls under the robot, and Nav2
+                    # fails every plan with "Starting point in lethal space".
+                    # 0.5 m clears the footprint's farthest corner (0.49 m).
+                    'range_min': 0.5,
                 }],
                 output='screen',
             )
