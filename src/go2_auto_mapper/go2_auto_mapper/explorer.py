@@ -16,10 +16,16 @@ from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseStamped
 
 from builtin_interfaces.msg import Duration
-from nav2_msgs.action import NavigateToPose, Spin
+from nav2_msgs.action import BackUp, NavigateToPose, Spin
 
 import tf2_ros
 from tf2_ros import TransformException
+
+from go2_auto_mapper.obstacle_sensing import (
+    angle_difference,
+    free_distance_ahead,
+    straight_line_clear,
+)
 
 
 class FrontierExplorer(Node):
@@ -51,6 +57,13 @@ class FrontierExplorer(Node):
         self.declare_parameter('scan_yaw', 2.0 * math.pi)
         self.declare_parameter('scan_time_allowance', 30.0)
 
+        # Watching Nav2's local costmap while driving: if something sits
+        # within obstacle_stop_distance of the nose for blocked_timeout
+        # seconds, give up on that goal, back away, and head somewhere open.
+        self.declare_parameter('obstacle_stop_distance', 0.3)
+        self.declare_parameter('blocked_timeout', 2.0)
+        self.declare_parameter('backup_distance', 0.3)
+
         self.map_topic = self.get_parameter(
             'map_topic'
         ).value
@@ -80,6 +93,12 @@ class FrontierExplorer(Node):
             'scan_time_allowance'
         ).value
 
+        self.obstacle_stop_distance = self.get_parameter(
+            'obstacle_stop_distance'
+        ).value
+        self.blocked_timeout = self.get_parameter('blocked_timeout').value
+        self.backup_distance = self.get_parameter('backup_distance').value
+
         # -----------------------------
         # Map
         # -----------------------------
@@ -99,6 +118,16 @@ class FrontierExplorer(Node):
             OccupancyGrid,
             self.map_topic,
             self.map_callback,
+            map_qos
+        )
+
+        # Nav2's local costmap (odom frame): the scan and 3D point cloud
+        # merged, i.e. what the controller itself avoids.
+        self.local_costmap = None
+        self.local_costmap_sub = self.create_subscription(
+            OccupancyGrid,
+            '/local_costmap/costmap',
+            self.local_costmap_callback,
             map_qos
         )
 
@@ -144,13 +173,24 @@ class FrontierExplorer(Node):
         # silently halting exploration. This bounds how long we'll wait.
         self.goal_timeout_sec = 60.0
 
-        # Nav2's behavior server turns the robot in place, checking the
-        # local costmap for collisions.
+        # Nav2's behavior server turns or backs the robot up, checking the
+        # local costmap for collisions. One maneuver runs at a time.
         self.spin_client = ActionClient(self, Spin, '/spin')
+        self.backup_client = ActionClient(self, BackUp, '/backup')
         self.scan_pending = self.get_parameter('scan_on_start').value
-        self.scan_active = False
-        self.scan_handle = None
-        self.scan_sent_time = None
+        self.backup_pending = False
+        self.maneuver_name = None
+        self.maneuver_active = False
+        self.maneuver_handle = None
+        self.maneuver_sent_time = None
+        self.maneuver_time_allowance = 0.0
+
+        # Set when a goal is abandoned for an obstacle ahead: the heading
+        # (map frame) that was blocked and when, so the next goals avoid that
+        # direction and favor longer walks into open space for a while.
+        self.blocked_since = None
+        self.blocked_heading = None
+        self.blocked_time = None
 
         self.exploration_complete_logged = False
 
@@ -158,6 +198,13 @@ class FrontierExplorer(Node):
         self.timer = self.create_timer(
             2.0,
             self.exploration_loop
+        )
+
+        # Faster than the exploration loop: at 0.5 m/s the robot covers
+        # 1 m in 2 s, too far between looks at what's ahead.
+        self.watch_timer = self.create_timer(
+            WATCH_PERIOD_SEC,
+            self.watch_ahead
         )
 
         self.get_logger().info(
@@ -186,9 +233,47 @@ class FrontierExplorer(Node):
 
         self.map = msg
 
+    def local_costmap_callback(self, msg):
+
+        if msg.info.width and msg.info.height and msg.info.resolution > 0.0:
+            self.local_costmap = msg
+
     # ==========================================================
     # GET ROBOT POSITION
     # ==========================================================
+
+    def get_robot_pose(self, frame):
+        """(x, y, yaw) of the robot in `frame`, or None if TF can't tell."""
+
+        try:
+            t = self.tf_buffer.lookup_transform(
+                frame, self.robot_frame, rclpy.time.Time()
+            ).transform
+        except TransformException:
+            return None
+
+        q = t.rotation
+        yaw = math.atan2(
+            2.0 * (q.w * q.z + q.x * q.y),
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        )
+        return t.translation.x, t.translation.y, yaw
+
+    def local_view(self):
+        """The local costmap plus the robot's pose in its frame, and the yaw
+        to add to a map-frame heading to get a costmap-frame one. None until
+        Nav2 publishes a costmap and TF has both poses."""
+
+        if self.local_costmap is None:
+            return None
+
+        local_pose = self.get_robot_pose(self.local_costmap.header.frame_id)
+        map_pose = self.get_robot_pose(self.map_frame)
+        if local_pose is None or map_pose is None:
+            return None
+
+        x, y, yaw = local_pose
+        return self.local_costmap, x, y, yaw, yaw - map_pose[2]
 
     def get_robot_position(self):
 
@@ -423,6 +508,12 @@ class FrontierExplorer(Node):
 
         candidates = []
 
+        # What Nav2 sees around the robot, for the straight-line and
+        # blocked-direction checks below. Without it (no costmap yet), every
+        # direction counts as open.
+        view = self.local_view()
+        blocked = self.recently_blocked() and self.blocked_heading is not None
+
         targets = [
             (frontier, point)
             for frontier in frontiers
@@ -507,16 +598,35 @@ class FrontierExplorer(Node):
             if self.is_goal_blacklisted(goal_x, goal_y):
                 continue
 
-            # Prefer nearby large frontiers.
-            score = (
-                distance
-                -
-                0.02 * len(frontier)
-            )
+            goal_range = math.hypot(goal_x - robot_x, goal_y - robot_y)
+            bearing = math.atan2(goal_y - robot_y, goal_x - robot_x)
 
-            is_far = (
-                math.hypot(goal_x - robot_x, goal_y - robot_y)
-                >= self.min_goal_distance
+            if blocked:
+                # Just turned away from an obstacle: take the longest walk
+                # on offer, to get clear of that spot.
+                score = -goal_range
+            else:
+                # Prefer nearby large frontiers.
+                score = (
+                    distance
+                    -
+                    0.02 * len(frontier)
+                )
+
+            is_far = goal_range >= self.min_goal_distance
+
+            line_clear = True
+            if view is not None:
+                grid, local_x, local_y, _, map_to_local_yaw = view
+                line_clear = straight_line_clear(
+                    grid, local_x, local_y,
+                    bearing + map_to_local_yaw,
+                    min(goal_range, LINE_CHECK_M)
+                )
+
+            toward_blocked = blocked and (
+                angle_difference(bearing, self.blocked_heading)
+                < BLOCKED_CONE_RAD
             )
 
             candidates.append(
@@ -525,17 +635,23 @@ class FrontierExplorer(Node):
                     goal_x,
                     goal_y,
                     len(frontier),
-                    is_far
+                    is_far,
+                    line_clear,
+                    toward_blocked
                 )
             )
 
         if not candidates:
             return None
 
-        far = [c for c in candidates if c[4]]
-        pool = far if far else candidates
-
-        best = min(pool, key=lambda c: c[0])
+        # In order: stay away from a just-blocked direction, then walk far
+        # enough, then have a clear straight line in Nav2's costmap, then the
+        # score. Each only breaks ties of the ones before it, so exploring
+        # never stalls when no candidate is ideal.
+        best = min(
+            candidates,
+            key=lambda c: (c[6], not c[4], not c[5], c[0])
+        )
 
         return best[:4]
 
@@ -672,72 +788,163 @@ class FrontierExplorer(Node):
         self.goal_sent_time = None
 
     # ==========================================================
-    # 360 DEGREE SCAN
+    # MANEUVERS: 360 DEGREE SCAN, BACKING AWAY
     # ==========================================================
 
     def start_scan(self):
-
-        if not self.spin_client.server_is_ready():
-            self.get_logger().info(
-                'Waiting for Nav2 spin behavior before the scan...',
-                throttle_duration_sec=5.0
-            )
-            return
 
         goal = Spin.Goal()
         goal.target_yaw = float(self.scan_yaw)
         goal.time_allowance = Duration(sec=int(self.scan_time_allowance))
 
-        self.get_logger().info('Turning in place to scan the surroundings.')
+        if self.start_maneuver(
+            self.spin_client, goal, 'Scan', self.scan_time_allowance
+        ):
+            self.scan_pending = False
+            self.get_logger().info('Turning in place to scan the surroundings.')
 
-        self.scan_pending = False
-        self.scan_active = True
-        self.scan_sent_time = time.monotonic()
+    def start_backup(self):
 
-        future = self.spin_client.send_goal_async(goal)
-        future.add_done_callback(self.scan_response_callback)
+        goal = BackUp.Goal()
+        goal.target.x = float(self.backup_distance)
+        goal.speed = BACKUP_SPEED_MPS
+        goal.time_allowance = Duration(sec=int(BACKUP_TIME_ALLOWANCE_SEC))
 
-    def scan_response_callback(self, future):
+        # Clear the flag even if Nav2 isn't ready: backing away is a nicety,
+        # and waiting for it would stall exploring.
+        self.backup_pending = False
+        if self.start_maneuver(
+            self.backup_client, goal, 'Back-up', BACKUP_TIME_ALLOWANCE_SEC
+        ):
+            self.get_logger().info(
+                f'Backing up {self.backup_distance:.1f} m from the obstacle.'
+            )
+
+    def start_maneuver(self, client, goal, name, time_allowance):
+        """Send a Nav2 behavior goal; False if its server isn't up yet."""
+
+        if not client.server_is_ready():
+            self.get_logger().info(
+                f'Waiting for Nav2 before: {name}...',
+                throttle_duration_sec=5.0
+            )
+            return False
+
+        self.maneuver_name = name
+        self.maneuver_active = True
+        self.maneuver_sent_time = time.monotonic()
+        self.maneuver_time_allowance = time_allowance
+
+        future = client.send_goal_async(goal)
+        future.add_done_callback(self.maneuver_response_callback)
+        return True
+
+    def maneuver_response_callback(self, future):
 
         try:
             goal_handle = future.result()
         except Exception as e:
-            self.get_logger().warn(f'Scan failed to start: {e}')
-            self.finish_scan()
+            self.get_logger().warn(f'{self.maneuver_name} failed to start: {e}')
+            self.finish_maneuver()
             return
 
         if not goal_handle.accepted:
-            self.get_logger().warn('Nav2 rejected the scan; skipping it.')
-            self.finish_scan()
+            self.get_logger().warn(
+                f'Nav2 rejected the {self.maneuver_name}; skipping it.'
+            )
+            self.finish_maneuver()
             return
 
-        self.scan_handle = goal_handle
+        self.maneuver_handle = goal_handle
         goal_handle.get_result_async().add_done_callback(
-            self.scan_result_callback
+            self.maneuver_result_callback
         )
 
-    def scan_result_callback(self, future):
+    def maneuver_result_callback(self, future):
 
         try:
             status = future.result().status
             if status == 4:
-                self.get_logger().info('Scan complete.')
+                self.get_logger().info(f'{self.maneuver_name} complete.')
             else:
-                # A blocked turn (obstacle too close) shouldn't stop
-                # exploring: the map is just updated from fewer angles.
+                # A blocked turn or back-up (obstacle too close) shouldn't
+                # stop exploring.
                 self.get_logger().warn(
-                    f'Scan ended early with status {status}; continuing.'
+                    f'{self.maneuver_name} ended early with status {status}; '
+                    'continuing.'
                 )
         except Exception as e:
-            self.get_logger().warn(f'Scan result error: {e}')
+            self.get_logger().warn(f'{self.maneuver_name} result error: {e}')
 
-        self.finish_scan()
+        self.finish_maneuver()
 
-    def finish_scan(self):
+    def finish_maneuver(self):
 
-        self.scan_handle = None
-        self.scan_active = False
-        self.scan_sent_time = None
+        self.maneuver_handle = None
+        self.maneuver_active = False
+        self.maneuver_sent_time = None
+
+    # ==========================================================
+    # OBSTACLE AHEAD
+    # ==========================================================
+
+    def watch_ahead(self):
+        """While driving to a goal, give it up if an obstacle has been right
+        in front of the nose for blocked_timeout seconds.
+
+        Nav2 steers around obstacles it can, so a short look at a wall (e.g.
+        while turning onto a path) is normal; staying nose-to-wall means the
+        controller is stuck or about to push into it.
+        """
+
+        try:
+            if not self.goal_active or self.current_goal_handle is None:
+                self.blocked_since = None
+                return
+
+            view = self.local_view()
+            if view is None:
+                return
+            grid, x, y, yaw, _ = view
+
+            gap = free_distance_ahead(
+                grid, x, y, yaw, self.obstacle_stop_distance
+            )
+            if gap is None:
+                self.blocked_since = None
+                return
+
+            now = time.monotonic()
+            if self.blocked_since is None:
+                self.blocked_since = now
+                return
+            if now - self.blocked_since < self.blocked_timeout:
+                return
+
+            map_pose = self.get_robot_pose(self.map_frame)
+            self.blocked_heading = map_pose[2] if map_pose else None
+            self.blocked_time = now
+            self.blocked_since = None
+
+            self.get_logger().warn(
+                f'Obstacle {gap:.2f} m ahead for {self.blocked_timeout:.1f} s; '
+                'abandoning this goal and heading somewhere open.'
+            )
+            # The result callback then blacklists the goal and frees the loop.
+            self.current_goal_handle.cancel_goal_async()
+            self.backup_pending = True
+
+        except Exception as e:
+            # Same reason as exploration_loop: never let a callback error
+            # crash the node while a goal is in flight.
+            self.get_logger().error(f'Obstacle watch error: {e}')
+
+    def recently_blocked(self):
+
+        return (
+            self.blocked_time is not None
+            and time.monotonic() - self.blocked_time < BLOCKED_MEMORY_SEC
+        )
 
     # ==========================================================
     # EXPLORATION LOOP
@@ -757,21 +964,27 @@ class FrontierExplorer(Node):
 
     def _exploration_loop_impl(self):
 
-        # The scan only needs odometry, not the map, so the startup scan runs
+        # Maneuvers only need odometry, not the map, so the startup scan runs
         # before SLAM has a map: turning in place is what gives it one.
-        if self.scan_active:
+        if self.maneuver_active:
             if (
-                self.scan_sent_time is not None
-                and time.monotonic() - self.scan_sent_time
-                > self.scan_time_allowance + 10.0
+                self.maneuver_sent_time is not None
+                and time.monotonic() - self.maneuver_sent_time
+                > self.maneuver_time_allowance + 10.0
             ):
-                self.get_logger().warn('No scan result, continuing without it.')
-                self.finish_scan()
+                self.get_logger().warn(
+                    f'No {self.maneuver_name} result, continuing without it.'
+                )
+                self.finish_maneuver()
             return
 
-        if self.scan_pending and not self.goal_active:
-            self.start_scan()
-            return
+        if not self.goal_active:
+            if self.backup_pending:
+                self.start_backup()
+                return
+            if self.scan_pending:
+                self.start_scan()
+                return
 
         # Don't do anything until SLAM has produced a map.
         if self.map is None:
@@ -867,9 +1080,9 @@ class FrontierExplorer(Node):
             self.get_logger().info('Cancelling active navigation goal.')
             future = self.current_goal_handle.cancel_goal_async()
             rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
-        if self.scan_handle is not None:
-            self.get_logger().info('Cancelling the scan.')
-            future = self.scan_handle.cancel_goal_async()
+        if self.maneuver_handle is not None:
+            self.get_logger().info(f'Cancelling the {self.maneuver_name}.')
+            future = self.maneuver_handle.cancel_goal_async()
             rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
 
 
@@ -877,6 +1090,22 @@ PR_SET_PDEATHSIG = 1  # from <linux/prctl.h>
 
 # Spacing of the extra goal candidates taken along a long frontier.
 FRONTIER_SAMPLE_SPACING_M = 1.0
+
+# How often watch_ahead looks at the local costmap while driving.
+WATCH_PERIOD_SEC = 0.25
+
+# After a goal is abandoned for an obstacle ahead: how long to steer goal
+# choice away from that heading, and how wide a cone around it to avoid.
+BLOCKED_MEMORY_SEC = 30.0
+BLOCKED_CONE_RAD = math.radians(45.0)
+
+# How far toward a goal to check the straight line in the local costmap;
+# beyond this the costmap (20 x 20 m) has little to say anyway.
+LINE_CHECK_M = 3.0
+
+# Backing away from an obstacle: slow, and with a short time limit.
+BACKUP_SPEED_MPS = 0.15
+BACKUP_TIME_ALLOWANCE_SEC = 10.0
 
 # Occupancy grid value (0-100) at or above which a cell counts as a wall,
 # matching map_server's default occupied threshold of 0.65.

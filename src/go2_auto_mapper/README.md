@@ -40,19 +40,29 @@ ros2 run go2_auto_mapper explorer
    space directly adjacent to unexplored (unknown) space.
 2. Frontier cells are clustered into regions; regions smaller than
    `min_frontier_size` (default 5 cells) are ignored as noise.
-3. It scores each region by distance (closer is better) and size (bigger
-   is better). The goal is a known-free cell `goal_distance` meters back
-   from that region's center, toward the robot, so Nav2 is not asked to
-   stop on the unknown boundary.
-4. The goal is sent to Nav2's `/navigate_to_pose` action — Nav2 plans the
+3. Each region offers target points (its middle, plus one about every
+   meter along long regions). The goal for a point is a known-free cell
+   `goal_distance` meters back toward the robot, at least `wall_clearance`
+   from any wall, so Nav2 is not asked to stop on the unknown boundary or
+   against a wall.
+4. It picks a goal in this order of priority: not toward a direction it was
+   just blocked in; at least `min_goal_distance` away; a straight line to it
+   that is clear in Nav2's local costmap (`/local_costmap/costmap`, which
+   merges the 2D scan and the 3D point cloud); then nearest and largest.
+5. The goal is sent to Nav2's `/navigate_to_pose` action — Nav2 plans the
    path and drives there, same as any manually-set goal.
-5. Once the map has no frontiers left, it logs "Exploration complete" and
+6. While driving, it checks the local costmap 4 times a second for an
+   obstacle within `obstacle_stop_distance` of the robot's nose, in a strip
+   as wide as its body. If one stays there for `blocked_timeout` seconds,
+   it cancels the goal, backs up `backup_distance`, and for the next 30
+   seconds avoids that heading and prefers the longest open walk on offer.
+7. Once the map has no frontiers left, it logs "Exploration complete" and
    stops sending goals (it keeps watching, in case new frontiers appear
    later — e.g. after a door opens or the robot is manually moved).
 
 If Nav2 rejects or fails a goal (e.g. it was too close to an obstacle), that
-spot is blacklisted for 30 seconds so the explorer doesn't immediately
-retry the same bad location forever.
+spot is blacklisted for 2 minutes so the explorer doesn't keep retrying the
+same bad locations.
 
 ## Stopping it
 
@@ -91,6 +101,9 @@ whatever Nav2 was commanding.
 | `goal_distance` | `0.8` | How far inside known space, toward the robot, to place the goal |
 | `min_goal_distance` | `1.5` | Skip goals closer than this (meters) while any farther frontier is left |
 | `wall_clearance` | `0.5` | Skip goal spots closer than this (meters) to a wall in the SLAM map |
+| `obstacle_stop_distance` | `0.3` | Gap (meters) in front of the nose that counts as blocked |
+| `blocked_timeout` | `2.0` | Seconds blocked before giving up the goal (a brief glance at a wall while turning is normal) |
+| `backup_distance` | `0.3` | How far (meters) to back up after giving up a blocked goal |
 | `scan_on_start` | `true` | Turn a full circle before exploring |
 | `scan_after_goal` | `true` | Turn a full circle after each goal it reaches |
 | `scan_yaw` | `6.283` (2π) | How far to turn per scan, in radians |
