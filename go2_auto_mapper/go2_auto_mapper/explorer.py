@@ -15,7 +15,8 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseStamped
 
-from nav2_msgs.action import NavigateToPose
+from builtin_interfaces.msg import Duration
+from nav2_msgs.action import NavigateToPose, Spin
 
 import tf2_ros
 from tf2_ros import TransformException
@@ -37,6 +38,13 @@ class FrontierExplorer(Node):
         self.declare_parameter('min_frontier_size', 5)
         self.declare_parameter('goal_distance', 0.8)
 
+        # A full turn in place gives SLAM a 360 degree lidar view, so it can
+        # place the robot on the map before (and after) each leg of exploring.
+        self.declare_parameter('scan_on_start', True)
+        self.declare_parameter('scan_after_goal', True)
+        self.declare_parameter('scan_yaw', 2.0 * math.pi)
+        self.declare_parameter('scan_time_allowance', 30.0)
+
         self.map_topic = self.get_parameter(
             'map_topic'
         ).value
@@ -55,6 +63,12 @@ class FrontierExplorer(Node):
 
         self.goal_distance = self.get_parameter(
             'goal_distance'
+        ).value
+
+        self.scan_after_goal = self.get_parameter('scan_after_goal').value
+        self.scan_yaw = self.get_parameter('scan_yaw').value
+        self.scan_time_allowance = self.get_parameter(
+            'scan_time_allowance'
         ).value
 
         # -----------------------------
@@ -118,6 +132,14 @@ class FrontierExplorer(Node):
         # done-callback fires and goal_active would stay True forever,
         # silently halting exploration. This bounds how long we'll wait.
         self.goal_timeout_sec = 60.0
+
+        # Nav2's behavior server turns the robot in place, checking the
+        # local costmap for collisions.
+        self.spin_client = ActionClient(self, Spin, '/spin')
+        self.scan_pending = self.get_parameter('scan_on_start').value
+        self.scan_active = False
+        self.scan_handle = None
+        self.scan_sent_time = None
 
         self.exploration_complete_logged = False
 
@@ -562,6 +584,9 @@ class FrontierExplorer(Node):
                     'Reached exploration goal.'
                 )
 
+                if self.scan_after_goal:
+                    self.scan_pending = True
+
             else:
 
                 self.get_logger().warn(
@@ -583,6 +608,74 @@ class FrontierExplorer(Node):
         self.goal_sent_time = None
 
     # ==========================================================
+    # 360 DEGREE SCAN
+    # ==========================================================
+
+    def start_scan(self):
+
+        if not self.spin_client.server_is_ready():
+            self.get_logger().info(
+                'Waiting for Nav2 spin behavior before the scan...',
+                throttle_duration_sec=5.0
+            )
+            return
+
+        goal = Spin.Goal()
+        goal.target_yaw = float(self.scan_yaw)
+        goal.time_allowance = Duration(sec=int(self.scan_time_allowance))
+
+        self.get_logger().info('Turning in place to scan the surroundings.')
+
+        self.scan_pending = False
+        self.scan_active = True
+        self.scan_sent_time = time.monotonic()
+
+        future = self.spin_client.send_goal_async(goal)
+        future.add_done_callback(self.scan_response_callback)
+
+    def scan_response_callback(self, future):
+
+        try:
+            goal_handle = future.result()
+        except Exception as e:
+            self.get_logger().warn(f'Scan failed to start: {e}')
+            self.finish_scan()
+            return
+
+        if not goal_handle.accepted:
+            self.get_logger().warn('Nav2 rejected the scan; skipping it.')
+            self.finish_scan()
+            return
+
+        self.scan_handle = goal_handle
+        goal_handle.get_result_async().add_done_callback(
+            self.scan_result_callback
+        )
+
+    def scan_result_callback(self, future):
+
+        try:
+            status = future.result().status
+            if status == 4:
+                self.get_logger().info('Scan complete.')
+            else:
+                # A blocked turn (obstacle too close) shouldn't stop
+                # exploring: the map is just updated from fewer angles.
+                self.get_logger().warn(
+                    f'Scan ended early with status {status}; continuing.'
+                )
+        except Exception as e:
+            self.get_logger().warn(f'Scan result error: {e}')
+
+        self.finish_scan()
+
+    def finish_scan(self):
+
+        self.scan_handle = None
+        self.scan_active = False
+        self.scan_sent_time = None
+
+    # ==========================================================
     # EXPLORATION LOOP
     # ==========================================================
 
@@ -599,6 +692,22 @@ class FrontierExplorer(Node):
             self.get_logger().error(f'Exploration loop error: {e}')
 
     def _exploration_loop_impl(self):
+
+        # The scan only needs odometry, not the map, so the startup scan runs
+        # before SLAM has a map: turning in place is what gives it one.
+        if self.scan_active:
+            if (
+                self.scan_sent_time is not None
+                and time.monotonic() - self.scan_sent_time
+                > self.scan_time_allowance + 10.0
+            ):
+                self.get_logger().warn('No scan result, continuing without it.')
+                self.finish_scan()
+            return
+
+        if self.scan_pending and not self.goal_active:
+            self.start_scan()
+            return
 
         # Don't do anything until SLAM has produced a map.
         if self.map is None:
@@ -634,8 +743,12 @@ class FrontierExplorer(Node):
 
         if robot_position is None:
 
-            self.get_logger().warn(
-                'Cannot determine robot position.'
+            # Normal for a few seconds at startup: SLAM only publishes the
+            # map frame once it has matched enough scans.
+            self.get_logger().info(
+                f'Waiting for robot position '
+                f'({self.map_frame} -> {self.robot_frame} from SLAM)...',
+                throttle_duration_sec=5.0
             )
 
             return
@@ -689,6 +802,10 @@ class FrontierExplorer(Node):
         if self.current_goal_handle is not None:
             self.get_logger().info('Cancelling active navigation goal.')
             future = self.current_goal_handle.cancel_goal_async()
+            rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+        if self.scan_handle is not None:
+            self.get_logger().info('Cancelling the scan.')
+            future = self.scan_handle.cancel_goal_async()
             rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
 
 

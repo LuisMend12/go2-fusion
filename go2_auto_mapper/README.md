@@ -31,6 +31,11 @@ ros2 run go2_auto_mapper explorer
 
 ## How it works
 
+0. On start, and again after each goal it reaches, the robot turns a full
+   circle in place through Nav2's spin behavior (which checks the local
+   costmap for obstacles). The 360 degree lidar view lets SLAM place the
+   robot on the map. Until SLAM publishes the `map` frame, the explorer
+   logs "Waiting for robot position" and does nothing else.
 1. Every 2 seconds, it scans the current map for frontier cells — free
    space directly adjacent to unexplored (unknown) space.
 2. Frontier cells are clustered into regions; regions smaller than
@@ -84,6 +89,10 @@ whatever Nav2 was commanding.
 | `map_frame` | `map` | TF frame the map is published in |
 | `min_frontier_size` | `5` | Minimum cluster size (in cells) to count as a real frontier |
 | `goal_distance` | `0.8` | How far inside known space, toward the robot, to place the goal |
+| `scan_on_start` | `true` | Turn a full circle before exploring |
+| `scan_after_goal` | `true` | Turn a full circle after each goal it reaches |
+| `scan_yaw` | `6.283` (2π) | How far to turn per scan, in radians |
+| `scan_time_allowance` | `30.0` | Seconds Nav2 has to finish the turn before giving up |
 
 Override at launch, e.g.:
 ```shell
