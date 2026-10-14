@@ -90,6 +90,7 @@ whatever Nav2 was commanding.
 | `min_frontier_size` | `5` | Minimum cluster size (in cells) to count as a real frontier |
 | `goal_distance` | `0.8` | How far inside known space, toward the robot, to place the goal |
 | `min_goal_distance` | `1.5` | Skip goals closer than this (meters) while any farther frontier is left |
+| `wall_clearance` | `0.5` | Skip goal spots closer than this (meters) to a wall in the SLAM map |
 | `scan_on_start` | `true` | Turn a full circle before exploring |
 | `scan_after_goal` | `true` | Turn a full circle after each goal it reaches |
 | `scan_yaw` | `6.283` (2π) | How far to turn per scan, in radians |

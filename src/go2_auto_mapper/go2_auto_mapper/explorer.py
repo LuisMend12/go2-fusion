@@ -40,6 +40,9 @@ class FrontierExplorer(Node):
         # Frontiers closer than this are only used once no farther one is
         # left, so each leg covers new ground instead of shuffling in place.
         self.declare_parameter('min_goal_distance', 1.5)
+        # Goals closer than this to a wall in the SLAM map are skipped:
+        # Nav2 can't place the robot's body there, and it scrapes walls.
+        self.declare_parameter('wall_clearance', 0.5)
 
         # A full turn in place gives SLAM a 360 degree lidar view, so it can
         # place the robot on the map before (and after) each leg of exploring.
@@ -69,6 +72,7 @@ class FrontierExplorer(Node):
         ).value
 
         self.min_goal_distance = self.get_parameter('min_goal_distance').value
+        self.wall_clearance = self.get_parameter('wall_clearance').value
 
         self.scan_after_goal = self.get_parameter('scan_after_goal').value
         self.scan_yaw = self.get_parameter('scan_yaw').value
@@ -325,13 +329,29 @@ class FrontierExplorer(Node):
 
     def frontier_center(self, frontier):
 
-        x = sum(p[0] for p in frontier)
-        y = sum(p[1] for p in frontier)
+        mean_x = sum(p[0] for p in frontier) / len(frontier)
+        mean_y = sum(p[1] for p in frontier) / len(frontier)
 
-        x /= len(frontier)
-        y /= len(frontier)
+        # The frontier cell nearest the mean, not the mean itself: a frontier
+        # that wraps around the robot (common right after the startup scan)
+        # has its mean on the robot, which made every goal a short hop.
+        return min(
+            frontier,
+            key=lambda p: (p[0] - mean_x) ** 2 + (p[1] - mean_y) ** 2
+        )
 
-        return x, y
+    def frontier_targets(self, frontier):
+        """Points to aim at on one frontier: its center, plus a cell about
+        every FRONTIER_SAMPLE_SPACING_M for long frontiers. A long frontier
+        (e.g. the whole edge of a room) then offers its far parts too, not
+        just the part nearest its middle."""
+
+        step = max(
+            1,
+            int(FRONTIER_SAMPLE_SPACING_M / self.map.info.resolution)
+        )
+
+        return [self.frontier_center(frontier)] + frontier[::step]
 
     # ==========================================================
     # GRID → WORLD
@@ -365,6 +385,24 @@ class FrontierExplorer(Node):
     # PICK FRONTIER
     # ==========================================================
 
+    def near_obstacle(self, gx, gy):
+        """True if an occupied map cell is within wall_clearance of (gx, gy)."""
+
+        radius = int(math.ceil(self.wall_clearance / self.map.info.resolution))
+
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                if dx * dx + dy * dy > radius * radius:
+                    continue
+                x, y = gx + dx, gy + dy
+                if (
+                    self.valid_cell(x, y)
+                    and self.cell_value(x, y) >= OCCUPIED_THRESHOLD
+                ):
+                    return True
+
+        return False
+
     def is_goal_blacklisted(self, x, y):
         now = time.monotonic()
 
@@ -385,9 +423,13 @@ class FrontierExplorer(Node):
 
         candidates = []
 
-        for frontier in frontiers:
+        targets = [
+            (frontier, point)
+            for frontier in frontiers
+            for point in self.frontier_targets(frontier)
+        ]
 
-            gx, gy = self.frontier_center(frontier)
+        for frontier, (gx, gy) in targets:
 
             # Convert frontier center to world coordinates.
             frontier_x, frontier_y = self.grid_to_world(gx, gy)
@@ -416,13 +458,12 @@ class FrontierExplorer(Node):
 
             target_gx, target_gy = self.world_to_grid(target_x, target_y)
 
-            best_goal = None
-            best_goal_distance = float('inf')
-
             search_radius = 8
 
             center_x = int(math.floor(target_gx))
             center_y = int(math.floor(target_gy))
+
+            free_cells = []
 
             for dy in range(-search_radius, search_radius + 1):
 
@@ -442,9 +483,18 @@ class FrontierExplorer(Node):
 
                     d = math.hypot(wx - target_x, wy - target_y)
 
-                    if d < best_goal_distance:
-                        best_goal_distance = d
-                        best_goal = (wx, wy)
+                    free_cells.append((d, x, y, wx, wy))
+
+            # Closest free cell that isn't against a wall. Checking clearance
+            # only until the first hit keeps this cheap.
+            free_cells.sort()
+            best_goal = next(
+                (
+                    (wx, wy) for _, x, y, wx, wy in free_cells
+                    if not self.near_obstacle(x, y)
+                ),
+                None
+            )
 
             if best_goal is None:
                 continue
@@ -824,6 +874,13 @@ class FrontierExplorer(Node):
 
 
 PR_SET_PDEATHSIG = 1  # from <linux/prctl.h>
+
+# Spacing of the extra goal candidates taken along a long frontier.
+FRONTIER_SAMPLE_SPACING_M = 1.0
+
+# Occupancy grid value (0-100) at or above which a cell counts as a wall,
+# matching map_server's default occupied threshold of 0.65.
+OCCUPIED_THRESHOLD = 65
 
 
 def stop_when_parent_dies():
