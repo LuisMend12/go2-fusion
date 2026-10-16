@@ -51,15 +51,19 @@ def visit_utility(revealed_cells, travel_m, cells_per_meter):
 
 
 def world_key(x, y, resolution):
-    """A map cell's identity that survives SLAM growing the map: the
-    OccupancyGrid origin moves (by whole cells) when the map grows, so grid
-    indices change, but which world cell a point falls in doesn't.
+    """World-cell index of the cell whose floor corner is (x, y).
 
-    floor, not round: a cell center sits at k + 0.5 cells, and round()
-    sends halves to the nearest even number, so neighboring cells would
-    share a key (296 frontier cells became 247 keys).
+    Pass that corner (map origin + cell index * resolution), not the cell
+    center. A center sits at k + 0.5 cells, and round() sends halves to the
+    nearest even number, so neighboring cells share a key (296 frontier
+    cells became 247 keys).
+
+    The corner is a whole number of cells. round() snaps it back onto that
+    integer when float error nudges it; floor() would drop a ratio that
+    lands just under the integer into the previous cell, and those two
+    cells would share a key again.
     """
-    return (math.floor(x / resolution), math.floor(y / resolution))
+    return (int(round(x / resolution)), int(round(y / resolution)))
 
 
 def remaining_size(target_keys, clusters):

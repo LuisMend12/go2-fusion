@@ -799,11 +799,21 @@ class FrontierExplorer(Node):
 
     def frontier_keys(self, frontier):
         """A frontier's cells as world keys, which stay valid when SLAM
-        grows the map and the grid origin moves."""
+        grows the map and the grid origin moves.
+
+        Keyed on each cell's floor corner. The center sits half a cell
+        higher, and rounding that half merges neighboring cells.
+        """
 
         resolution = self.map.info.resolution
+        origin_x = self.map.info.origin.position.x
+        origin_y = self.map.info.origin.position.y
         return frozenset(
-            world_key(*self.grid_to_world(gx, gy), resolution)
+            world_key(
+                origin_x + gx * resolution,
+                origin_y + gy * resolution,
+                resolution,
+            )
             for gx, gy in frontier
         )
 

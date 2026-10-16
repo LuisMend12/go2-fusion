@@ -64,18 +64,25 @@ def test_utility_trades_gain_against_distance():
 def test_world_key_survives_origin_shift():
     res = 0.05
 
-    def center(origin, gx):
-        return origin + (gx + 0.5) * res
+    def corner(origin, gx):
+        return origin + gx * res
 
     # A grid with origin -5.0 and one that grew by 20 cells (origin -6.0):
     # the same physical cell has index 30 in one and 50 in the other.
-    assert world_key(center(-5.0, 30), 0.0, res) == world_key(center(-6.0, 50), 0.0, res)
+    assert world_key(corner(-5.0, 30), 0.0, res) == world_key(corner(-6.0, 50), 0.0, res)
 
 
 def test_world_key_keeps_neighboring_cells_apart():
     res = 0.05
-    keys = {world_key(-5.0 + (gx + 0.5) * res, 0.0, res) for gx in range(200)}
-    assert len(keys) == 200
+    origin = -5.0
+    # Long enough to include corners whose ratio floats just off an integer
+    # (those are the ones floor() would merge with a neighbor).
+    keys = {
+        world_key(origin + gx * res, origin + gy * res, res)
+        for gx in range(300)
+        for gy in range(4)
+    }
+    assert len(keys) == 300 * 4
 
 
 def test_remaining_size_counts_overlapping_clusters():
