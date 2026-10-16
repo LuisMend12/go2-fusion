@@ -27,6 +27,7 @@ from go2_auto_mapper.obstacle_sensing import (
     free_distance_ahead,
     straight_line_clear,
 )
+from go2_auto_mapper.open_space import OCCUPIED_THRESHOLD, find_open_space
 
 
 class FrontierExplorer(Node):
@@ -58,12 +59,20 @@ class FrontierExplorer(Node):
         self.declare_parameter('scan_yaw', 2.0 * math.pi)
         self.declare_parameter('scan_time_allowance', 30.0)
 
-        # Watching Nav2's local costmap while driving: if something sits
-        # within obstacle_stop_distance of the nose for blocked_timeout
-        # seconds, give up on that goal, back away, and head somewhere open.
+        # Watching Nav2's local costmap: whenever something is within
+        # obstacle_stop_distance of the nose (for blocked_timeout seconds;
+        # 0 = at once), back away. While driving, the goal is given up first
+        # and the robot then heads somewhere open.
         self.declare_parameter('obstacle_stop_distance', 0.3)
-        self.declare_parameter('blocked_timeout', 2.0)
+        self.declare_parameter('blocked_timeout', 0.0)
         self.declare_parameter('backup_distance', 0.3)
+
+        # Getting unstuck: after stuck_failure_count failed goals in a row
+        # (or an obstacle-ahead abort, or no usable goal), drive to the
+        # nearest spot with open_space_clearance meters of room on every
+        # side, scan there, then carry on exploring.
+        self.declare_parameter('open_space_clearance', 0.8)
+        self.declare_parameter('stuck_failure_count', 3)
 
         self.map_topic = self.get_parameter(
             'map_topic'
@@ -99,6 +108,12 @@ class FrontierExplorer(Node):
         ).value
         self.blocked_timeout = self.get_parameter('blocked_timeout').value
         self.backup_distance = self.get_parameter('backup_distance').value
+        self.open_space_clearance = self.get_parameter(
+            'open_space_clearance'
+        ).value
+        self.stuck_failure_count = self.get_parameter(
+            'stuck_failure_count'
+        ).value
 
         # -----------------------------
         # Map
@@ -122,8 +137,8 @@ class FrontierExplorer(Node):
             map_qos
         )
 
-        # Nav2's local costmap (odom frame): the scan and 3D point cloud
-        # merged, i.e. what the controller itself avoids.
+        # Nav2's local costmap (odom frame): built from /scan, i.e. what the
+        # controller itself avoids.
         self.local_costmap = None
         self.local_costmap_sub = self.create_subscription(
             OccupancyGrid,
@@ -180,6 +195,7 @@ class FrontierExplorer(Node):
         self.backup_client = ActionClient(self, BackUp, '/backup')
         self.scan_pending = self.get_parameter('scan_on_start').value
         self.backup_pending = False
+        self.last_backup_time = None
         self.maneuver_name = None
         self.maneuver_active = False
         self.maneuver_handle = None
@@ -192,6 +208,13 @@ class FrontierExplorer(Node):
         self.blocked_since = None
         self.blocked_heading = None
         self.blocked_time = None
+
+        # Getting unstuck (see request_escape / start_escape).
+        self.consecutive_failures = 0
+        self.no_goal_cycles = 0
+        self.escape_pending = False
+        self.goal_is_escape = False
+        self.last_escape_time = None
 
         self.exploration_complete_logged = False
 
@@ -667,13 +690,14 @@ class FrontierExplorer(Node):
     # SEND NAVIGATION GOAL
     # ==========================================================
 
-    def send_goal(self, x, y):
+    def send_goal(self, x, y, is_escape=False):
+        """Send a Nav2 goal; False if Nav2 isn't ready yet."""
 
         if not self.nav_client.server_is_ready():
             self.get_logger().warn(
                 'Waiting for Nav2...'
             )
-            return
+            return False
 
         goal = NavigateToPose.Goal()
 
@@ -689,11 +713,12 @@ class FrontierExplorer(Node):
         goal.pose.pose.orientation.w = 1.0
 
         self.get_logger().info(
-            f'Sending exploration goal: '
+            f'Sending {"escape" if is_escape else "exploration"} goal: '
             f'x={x:.2f}, y={y:.2f}'
         )
 
         self.goal_active = True
+        self.goal_is_escape = is_escape
         self.current_goal = (x, y)
         self.goal_sent_time = time.monotonic()
 
@@ -704,6 +729,8 @@ class FrontierExplorer(Node):
         future.add_done_callback(
             self.goal_response_callback
         )
+
+        return True
 
     # ==========================================================
     # NAV2 RESPONSE
@@ -721,7 +748,7 @@ class FrontierExplorer(Node):
                 f'Navigation goal failed: {e}'
             )
 
-            self.blacklist_current_goal()
+            self.record_goal_failure()
             self.goal_active = False
             self.goal_sent_time = None
             return
@@ -732,7 +759,7 @@ class FrontierExplorer(Node):
                 'Nav2 rejected the exploration goal.'
             )
 
-            self.blacklist_current_goal()
+            self.record_goal_failure()
             self.goal_active = False
             self.goal_sent_time = None
             return
@@ -754,6 +781,27 @@ class FrontierExplorer(Node):
             x, y = self.current_goal
             self.failed_goals.append((x, y, time.monotonic()))
 
+    def record_goal_failure(self):
+        """A goal was rejected, failed or stalled: avoid that spot for a
+        while, and treat several failures in a row as being stuck."""
+
+        self.blacklist_current_goal()
+
+        if self.goal_is_escape:
+            # Don't escape from a failed escape (request_escape's cooldown
+            # also guards this); just go back to exploring.
+            self.get_logger().warn(
+                'Could not reach the open space; carrying on exploring.'
+            )
+            return
+
+        self.consecutive_failures += 1
+        if self.consecutive_failures >= self.stuck_failure_count:
+            self.consecutive_failures = 0
+            self.request_escape(
+                f'{self.stuck_failure_count} goals failed in a row'
+            )
+
     # ==========================================================
     # NAVIGATION RESULT
     # ==========================================================
@@ -769,8 +817,10 @@ class FrontierExplorer(Node):
             if status == 4:
 
                 self.get_logger().info(
-                    'Reached exploration goal.'
+                    'Reached open space.' if self.goal_is_escape
+                    else 'Reached exploration goal.'
                 )
+                self.consecutive_failures = 0
 
                 if self.scan_after_goal:
                     self.scan_pending = True
@@ -786,7 +836,7 @@ class FrontierExplorer(Node):
                     f'Navigation ended with status {status}'
                 )
 
-                self.blacklist_current_goal()
+                self.record_goal_failure()
 
         except Exception as e:
 
@@ -794,7 +844,7 @@ class FrontierExplorer(Node):
                 f'Navigation result error: {e}'
             )
 
-            self.blacklist_current_goal()
+            self.record_goal_failure()
 
         self.current_goal_handle = None
         self.goal_active = False
@@ -858,6 +908,7 @@ class FrontierExplorer(Node):
         # Clear the flag even if Nav2 isn't ready: backing away is a nicety,
         # and waiting for it would stall exploring.
         self.backup_pending = False
+        self.last_backup_time = time.monotonic()
         if self.start_maneuver(
             self.backup_client, goal, 'Back-up', BACKUP_TIME_ALLOWANCE_SEC
         ):
@@ -934,16 +985,17 @@ class FrontierExplorer(Node):
     # ==========================================================
 
     def watch_ahead(self):
-        """While driving to a goal, give it up if an obstacle has been right
-        in front of the nose for blocked_timeout seconds.
+        """Back away whenever an obstacle is right in front of the nose.
 
-        Nav2 steers around obstacles it can, so a short look at a wall (e.g.
-        while turning onto a path) is normal; staying nose-to-wall means the
-        controller is stuck or about to push into it.
+        While driving to a goal, the goal is given up first once the obstacle
+        has been there blocked_timeout seconds (0 = at once). While idle
+        (between goals, before a scan), the robot backs up straight away.
+        During a turn or back-up nothing is done: Nav2's behaviors check for
+        collisions themselves.
         """
 
         try:
-            if not self.goal_active or self.current_goal_handle is None:
+            if self.maneuver_active:
                 self.blocked_since = None
                 return
 
@@ -958,6 +1010,13 @@ class FrontierExplorer(Node):
             if gap is None:
                 self.blocked_since = None
                 return
+
+            if not self.goal_active:
+                self.back_away_while_idle(gap)
+                return
+
+            if self.current_goal_handle is None:
+                return  # goal not accepted yet; nothing to cancel
 
             now = time.monotonic()
             if self.blocked_since is None:
@@ -976,13 +1035,31 @@ class FrontierExplorer(Node):
                 'abandoning this goal and heading somewhere open.'
             )
             # The result callback then blacklists the goal and frees the loop.
+            # Dropping the handle stops the next ticks (before Nav2 confirms)
+            # from cancelling and asking to escape again.
             self.current_goal_handle.cancel_goal_async()
+            self.current_goal_handle = None
             self.backup_pending = True
+            self.request_escape('obstacle ahead')
 
         except Exception as e:
             # Same reason as exploration_loop: never let a callback error
             # crash the node while a goal is in flight.
             self.get_logger().error(f'Obstacle watch error: {e}')
+
+    def back_away_while_idle(self, gap):
+        """Something is right in front and the robot isn't driving anywhere:
+        back up now, unless a back-up was just tried (the space behind may be
+        blocked too, and Nav2 would refuse every attempt)."""
+
+        if self.backup_pending or (
+            self.last_backup_time is not None
+            and time.monotonic() - self.last_backup_time < BACKUP_RETRY_SEC
+        ):
+            return
+
+        self.get_logger().warn(f'Obstacle {gap:.2f} m ahead; backing away.')
+        self.start_backup()
 
     def recently_blocked(self):
 
@@ -990,6 +1067,65 @@ class FrontierExplorer(Node):
             self.blocked_time is not None
             and time.monotonic() - self.blocked_time < BLOCKED_MEMORY_SEC
         )
+
+    # ==========================================================
+    # GETTING UNSTUCK: NEAREST OPEN SPACE
+    # ==========================================================
+
+    def request_escape(self, reason):
+        """Queue a drive to the nearest open space (run by the loop once the
+        robot is free to move), unless one was tried just now."""
+
+        if (
+            self.last_escape_time is not None
+            and time.monotonic() - self.last_escape_time < ESCAPE_COOLDOWN_SEC
+        ):
+            self.get_logger().info(
+                f'Stuck ({reason}), but just tried open space; not again yet.'
+            )
+            return
+
+        self.get_logger().warn(f'Stuck ({reason}): heading for open space.')
+        self.escape_pending = True
+
+    def start_escape(self):
+        """Send a goal to the nearest roomy spot on the SLAM map. A scan
+        follows on arrival (scan_after_goal), then exploring resumes."""
+
+        self.escape_pending = False
+        self.last_escape_time = time.monotonic()
+
+        position = self.get_robot_position()
+        if self.map is None or position is None:
+            self.get_logger().warn('Escape skipped: no map or position yet.')
+            return
+
+        resolution = self.map.info.resolution
+        start = tuple(int(math.floor(v)) for v in self.world_to_grid(*position))
+        found = find_open_space(
+            self.map.data,
+            self.map.info.width,
+            self.map.info.height,
+            start,
+            clearance=int(math.ceil(self.open_space_clearance / resolution)),
+            max_radius=int(OPEN_SPACE_SEARCH_RADIUS_M / resolution),
+            min_move=int(OPEN_SPACE_MIN_MOVE_M / resolution),
+        )
+
+        if found is None:
+            self.get_logger().warn(
+                'No roomier spot within '
+                f'{OPEN_SPACE_SEARCH_RADIUS_M:.0f} m; carrying on exploring.'
+            )
+            return
+
+        gx, gy, room = found
+        x, y = self.grid_to_world(gx, gy)
+        self.get_logger().info(
+            f'Open space at x={x:.2f}, y={y:.2f} '
+            f'({room * resolution:.2f} m from the nearest wall).'
+        )
+        self.send_goal(x, y, is_escape=True)
 
     # ==========================================================
     # EXPLORATION LOOP
@@ -1020,13 +1156,22 @@ class FrontierExplorer(Node):
                 self.get_logger().warn(
                     f'No {self.maneuver_name} result, continuing without it.'
                 )
+                # Cancel it in Nav2 too, so it can't keep turning or backing
+                # up underneath the next goal.
+                if self.maneuver_handle is not None:
+                    self.maneuver_handle.cancel_goal_async()
                 self.finish_maneuver()
             return
 
         if not self.goal_active:
+            # Back away first, then head for open space, then look around.
             if self.backup_pending:
                 self.start_backup()
                 return
+            if self.escape_pending:
+                self.start_escape()
+                if self.goal_active:
+                    return
             if self.scan_pending:
                 self.start_scan()
                 return
@@ -1052,7 +1197,11 @@ class FrontierExplorer(Node):
                 'No Nav2 result after '
                 f'{self.goal_timeout_sec:.0f}s, treating goal as stalled.'
             )
-            self.blacklist_current_goal()
+            # Cancel it in Nav2 too: just forgetting it would leave Nav2
+            # driving there while we start a turn, back-up or new goal.
+            if self.current_goal_handle is not None:
+                self.current_goal_handle.cancel_goal_async()
+            self.record_goal_failure()
             self.current_goal_handle = None
             self.goal_active = False
             self.goal_sent_time = None
@@ -1108,7 +1257,13 @@ class FrontierExplorer(Node):
                 f'failed spots to expire ({self.failed_goal_cooldown_sec:.0f} s).',
                 throttle_duration_sec=10.0
             )
+            self.no_goal_cycles += 1
+            if self.no_goal_cycles >= STUCK_NO_GOAL_CYCLES:
+                self.no_goal_cycles = 0
+                self.request_escape('no usable goal')
             return
+
+        self.no_goal_cycles = 0
 
         score, x, y, size = selected
 
@@ -1158,9 +1313,19 @@ LINE_CHECK_M = 3.0
 BACKUP_SPEED_MPS = 0.15
 BACKUP_TIME_ALLOWANCE_SEC = 10.0
 
-# Occupancy grid value (0-100) at or above which a cell counts as a wall,
-# matching map_server's default occupied threshold of 0.65.
-OCCUPIED_THRESHOLD = 65
+# Least time between automatic back-ups when idle, so a robot boxed in front
+# and behind doesn't retry (and get refused by Nav2) every quarter second.
+BACKUP_RETRY_SEC = 5.0
+
+# Getting unstuck: how far from the robot to look for open space, the least
+# it must move to count, and the pause between escapes so a failed escape
+# can't immediately trigger another one.
+OPEN_SPACE_SEARCH_RADIUS_M = 4.0
+OPEN_SPACE_MIN_MOVE_M = 0.5
+ESCAPE_COOLDOWN_SEC = 30.0
+
+# "No usable goal" this many loops in a row counts as stuck.
+STUCK_NO_GOAL_CYCLES = 2
 
 
 def stop_when_parent_dies():

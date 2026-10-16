@@ -5,6 +5,7 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTimer>
@@ -20,20 +21,35 @@ namespace
 // Nav2 goal) before giving up and force-killing the process.
 constexpr int kGracefulStopTimeoutMs = 5000;
 
-// Re-enable the Scan button if the explorer never answers the request.
-constexpr int kScanReplyTimeoutMs = 5000;
+// Re-enable a service button if the node never answers the request.
+constexpr int kServiceReplyTimeoutMs = 5000;
 
 constexpr char kScanService[] = "/frontier_explorer/scan";
+constexpr char kResetMapService[] = "/lidar_to_pointcloud/reset";
+
+constexpr char kScanLabel[] = "Scan";
+constexpr char kResetMapLabel[] = "Reset maps";
+
+// Humble's slam_toolbox has no reset service. robot.launch.py starts it with
+// respawn=True, so stopping it (SIGINT, a clean shutdown) makes launch start
+// a fresh one with an empty map. RViz runs in the same container as the
+// stack, so pkill reaches it.
+constexpr char kSlamProcessPattern[] = "async_slam_toolbox_node";
 }  // namespace
 
 AutoMapperPanel::AutoMapperPanel(QWidget * parent)
 : rviz_common::Panel(parent)
 {
   start_stop_button_ = new QPushButton("Start", this);
-  scan_button_ = new QPushButton("Scan", this);
+  scan_button_ = new QPushButton(kScanLabel, this);
   scan_button_->setToolTip(
     "Turn the robot 360 degrees so SLAM can re-place it on the map. "
     "Pauses the current goal; needs the explorer running.");
+  reset_map_button_ = new QPushButton(kResetMapLabel, this);
+  reset_map_button_->setToolTip(
+    "Start both maps over from where the robot stands: restarts SLAM (the 2D "
+    "/map the auto mapper explores) and clears the accumulated 3D point "
+    "cloud (/pointcloud/aggregated, 3d_map.ply). Asks to confirm first.");
   status_label_ = new QLabel("Stopped", this);
   log_view_ = new QPlainTextEdit(this);
   log_view_->setReadOnly(true);
@@ -42,6 +58,7 @@ AutoMapperPanel::AutoMapperPanel(QWidget * parent)
   auto * buttons = new QHBoxLayout();
   buttons->addWidget(start_stop_button_);
   buttons->addWidget(scan_button_);
+  buttons->addWidget(reset_map_button_);
 
   auto * layout = new QVBoxLayout(this);
   layout->addWidget(status_label_);
@@ -51,11 +68,13 @@ AutoMapperPanel::AutoMapperPanel(QWidget * parent)
 
   node_ = rclcpp::Node::make_shared("go2_rviz_auto_mapper_panel");
   scan_client_ = node_->create_client<std_srvs::srv::Trigger>(kScanService);
+  reset_map_client_ = node_->create_client<std_srvs::srv::Trigger>(kResetMapService);
   executor_.add_node(node_);
   spin_thread_ = std::thread([this]() {executor_.spin();});
 
   connect(scan_button_, &QPushButton::clicked, this, &AutoMapperPanel::onScanClicked);
-  connect(this, &AutoMapperPanel::scanReplied, this, &AutoMapperPanel::onScanReplied);
+  connect(reset_map_button_, &QPushButton::clicked, this, &AutoMapperPanel::onResetMapClicked);
+  connect(this, &AutoMapperPanel::serviceReplied, this, &AutoMapperPanel::onServiceReplied);
 
   process_ = new QProcess(this);
   process_->setProcessChannelMode(QProcess::SeparateChannels);
@@ -126,27 +145,69 @@ void AutoMapperPanel::onStartStopClicked()
 
 void AutoMapperPanel::onScanClicked()
 {
-  if (!scan_client_->service_is_ready()) {
-    appendLog("[panel] Scan: the explorer isn't running. Press Start first.");
+  callTrigger(
+    scan_client_, scan_button_, kScanLabel,
+    "the explorer isn't running. Press Start first.");
+}
+
+void AutoMapperPanel::onResetMapClicked()
+{
+  const auto answer = QMessageBox::question(
+    this, "Reset maps",
+    "Throw away the 2D SLAM map and the 3D point cloud, and start both over "
+    "from where the robot is now?\n\n"
+    "Navigation pauses for a few seconds while SLAM restarts.");
+  if (answer != QMessageBox::Yes) {
     return;
   }
 
-  scan_button_->setEnabled(false);
-  QTimer::singleShot(kScanReplyTimeoutMs, this, [this]() {scan_button_->setEnabled(true);});
+  // 2D: stop slam_toolbox; launch respawns it with an empty map.
+  const int pkill_code = QProcess::execute("pkill", {"-INT", "-f", kSlamProcessPattern});
+  if (pkill_code == 0) {
+    appendLog("[panel] Reset maps: SLAM restarting with a fresh 2D map.");
+  } else {
+    appendLog(
+      QString("[panel] Reset maps: couldn't stop SLAM (pkill exit code %1); "
+      "is the robot stack running in this container?").arg(pkill_code));
+  }
+
+  // 3D: clear lidar_processor's accumulated cloud.
+  callTrigger(
+    reset_map_client_, reset_map_button_, kResetMapLabel,
+    "lidar_to_pointcloud isn't running, so the 3D cloud wasn't cleared.");
+}
+
+void AutoMapperPanel::callTrigger(
+  const TriggerClient::SharedPtr & client, QPushButton * button,
+  const QString & label, const QString & not_running_hint)
+{
+  if (!client->service_is_ready()) {
+    appendLog(QString("[panel] %1: %2").arg(label, not_running_hint));
+    return;
+  }
+
+  button->setEnabled(false);
+  QTimer::singleShot(kServiceReplyTimeoutMs, button, [button]() {button->setEnabled(true);});
 
   auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
-  scan_client_->async_send_request(
+  client->async_send_request(
     request,
-    [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+    [this, label](TriggerClient::SharedFuture future) {
       const auto response = future.get();
-      emit scanReplied(response->success, QString::fromStdString(response->message));
+      emit serviceReplied(label, response->success, QString::fromStdString(response->message));
     });
 }
 
-void AutoMapperPanel::onScanReplied(bool success, const QString & message)
+QPushButton * AutoMapperPanel::buttonFor(const QString & label) const
 {
-  scan_button_->setEnabled(true);
-  appendLog(QString("[panel] Scan: %1").arg(success ? message : "refused, " + message));
+  return label == kScanLabel ? scan_button_ : reset_map_button_;
+}
+
+void AutoMapperPanel::onServiceReplied(
+  const QString & label, bool success, const QString & message)
+{
+  buttonFor(label)->setEnabled(true);
+  appendLog(QString("[panel] %1: %2").arg(label, success ? message : "refused, " + message));
 }
 
 void AutoMapperPanel::onForceKillTimeout()
