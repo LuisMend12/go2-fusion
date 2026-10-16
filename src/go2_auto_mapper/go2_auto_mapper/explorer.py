@@ -59,11 +59,12 @@ class FrontierExplorer(Node):
         self.declare_parameter('scan_yaw', 2.0 * math.pi)
         self.declare_parameter('scan_time_allowance', 30.0)
 
-        # Watching Nav2's local costmap while driving: if something sits
-        # within obstacle_stop_distance of the nose for blocked_timeout
-        # seconds, give up on that goal, back away, and head somewhere open.
+        # Watching Nav2's local costmap: whenever something is within
+        # obstacle_stop_distance of the nose (for blocked_timeout seconds;
+        # 0 = at once), back away. While driving, the goal is given up first
+        # and the robot then heads somewhere open.
         self.declare_parameter('obstacle_stop_distance', 0.3)
-        self.declare_parameter('blocked_timeout', 2.0)
+        self.declare_parameter('blocked_timeout', 0.0)
         self.declare_parameter('backup_distance', 0.3)
 
         # Getting unstuck: after stuck_failure_count failed goals in a row
@@ -194,6 +195,7 @@ class FrontierExplorer(Node):
         self.backup_client = ActionClient(self, BackUp, '/backup')
         self.scan_pending = self.get_parameter('scan_on_start').value
         self.backup_pending = False
+        self.last_backup_time = None
         self.maneuver_name = None
         self.maneuver_active = False
         self.maneuver_handle = None
@@ -906,6 +908,7 @@ class FrontierExplorer(Node):
         # Clear the flag even if Nav2 isn't ready: backing away is a nicety,
         # and waiting for it would stall exploring.
         self.backup_pending = False
+        self.last_backup_time = time.monotonic()
         if self.start_maneuver(
             self.backup_client, goal, 'Back-up', BACKUP_TIME_ALLOWANCE_SEC
         ):
@@ -982,16 +985,17 @@ class FrontierExplorer(Node):
     # ==========================================================
 
     def watch_ahead(self):
-        """While driving to a goal, give it up if an obstacle has been right
-        in front of the nose for blocked_timeout seconds.
+        """Back away whenever an obstacle is right in front of the nose.
 
-        Nav2 steers around obstacles it can, so a short look at a wall (e.g.
-        while turning onto a path) is normal; staying nose-to-wall means the
-        controller is stuck or about to push into it.
+        While driving to a goal, the goal is given up first once the obstacle
+        has been there blocked_timeout seconds (0 = at once). While idle
+        (between goals, before a scan), the robot backs up straight away.
+        During a turn or back-up nothing is done: Nav2's behaviors check for
+        collisions themselves.
         """
 
         try:
-            if not self.goal_active or self.current_goal_handle is None:
+            if self.maneuver_active:
                 self.blocked_since = None
                 return
 
@@ -1006,6 +1010,13 @@ class FrontierExplorer(Node):
             if gap is None:
                 self.blocked_since = None
                 return
+
+            if not self.goal_active:
+                self.back_away_while_idle(gap)
+                return
+
+            if self.current_goal_handle is None:
+                return  # goal not accepted yet; nothing to cancel
 
             now = time.monotonic()
             if self.blocked_since is None:
@@ -1024,7 +1035,10 @@ class FrontierExplorer(Node):
                 'abandoning this goal and heading somewhere open.'
             )
             # The result callback then blacklists the goal and frees the loop.
+            # Dropping the handle stops the next ticks (before Nav2 confirms)
+            # from cancelling and asking to escape again.
             self.current_goal_handle.cancel_goal_async()
+            self.current_goal_handle = None
             self.backup_pending = True
             self.request_escape('obstacle ahead')
 
@@ -1032,6 +1046,20 @@ class FrontierExplorer(Node):
             # Same reason as exploration_loop: never let a callback error
             # crash the node while a goal is in flight.
             self.get_logger().error(f'Obstacle watch error: {e}')
+
+    def back_away_while_idle(self, gap):
+        """Something is right in front and the robot isn't driving anywhere:
+        back up now, unless a back-up was just tried (the space behind may be
+        blocked too, and Nav2 would refuse every attempt)."""
+
+        if self.backup_pending or (
+            self.last_backup_time is not None
+            and time.monotonic() - self.last_backup_time < BACKUP_RETRY_SEC
+        ):
+            return
+
+        self.get_logger().warn(f'Obstacle {gap:.2f} m ahead; backing away.')
+        self.start_backup()
 
     def recently_blocked(self):
 
@@ -1284,6 +1312,10 @@ LINE_CHECK_M = 3.0
 # Backing away from an obstacle: slow, and with a short time limit.
 BACKUP_SPEED_MPS = 0.15
 BACKUP_TIME_ALLOWANCE_SEC = 10.0
+
+# Least time between automatic back-ups when idle, so a robot boxed in front
+# and behind doesn't retry (and get refused by Nav2) every quarter second.
+BACKUP_RETRY_SEC = 5.0
 
 # Getting unstuck: how far from the robot to look for open space, the least
 # it must move to count, and the pause between escapes so a failed escape

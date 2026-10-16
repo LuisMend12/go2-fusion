@@ -51,11 +51,15 @@ ros2 run go2_auto_mapper explorer
    merges the 2D scan and the 3D point cloud); then nearest and largest.
 5. The goal is sent to Nav2's `/navigate_to_pose` action — Nav2 plans the
    path and drives there, same as any manually-set goal.
-6. While driving, it checks the local costmap 4 times a second for an
-   obstacle within `obstacle_stop_distance` of the robot's nose, in a strip
-   as wide as its body. If one stays there for `blocked_timeout` seconds,
-   it cancels the goal, backs up `backup_distance`, and for the next 30
-   seconds avoids that heading and prefers the longest open walk on offer.
+6. It checks the local costmap 4 times a second for an obstacle within
+   `obstacle_stop_distance` of the robot's nose, in a strip as wide as its
+   body, and **always backs up** (`backup_distance`) when it finds one.
+   While driving to a goal it gives the goal up first (after
+   `blocked_timeout`, default 0 = at once), then heads for open space and
+   for the next 30 seconds avoids that heading. While idle it backs up
+   straight away, at most once every 5 s (in case the space behind is
+   blocked too). During a turn or back-up it leaves collision checks to
+   Nav2.
 7. **When stuck, it heads for open space.** Stuck means `stuck_failure_count`
    (3) goals failed in a row, an obstacle-ahead abort, or "No usable goal"
    twice running. It then finds the nearest known-free spot with at least
@@ -117,7 +121,7 @@ whatever Nav2 was commanding.
 | `min_goal_distance` | `1.5` | Skip goals closer than this (meters) while any farther frontier is left |
 | `wall_clearance` | `0.5` | Skip goal spots closer than this (meters) to a wall in the SLAM map |
 | `obstacle_stop_distance` | `0.3` | Gap (meters) in front of the nose that counts as blocked |
-| `blocked_timeout` | `2.0` | Seconds blocked before giving up the goal (a brief glance at a wall while turning is normal) |
+| `blocked_timeout` | `0.0` | Seconds an obstacle must stay ahead before a goal is given up (0 = at once) |
 | `backup_distance` | `0.3` | How far (meters) to back up after giving up a blocked goal |
 | `open_space_clearance` | `0.8` | Room (meters) on every side that counts as open space when stuck |
 | `stuck_failure_count` | `3` | Failed goals in a row that count as stuck |
