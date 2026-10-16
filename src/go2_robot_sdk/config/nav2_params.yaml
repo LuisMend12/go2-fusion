@@ -218,7 +218,12 @@ local_costmap:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
         publish_voxel_map: True
-        observation_sources: scan pointcloud
+        # Only the 2D scan, not /point_cloud2: the driver's cloud accumulates
+        # in odom while odometry z drifts, so the floor is smeared over about
+        # -0.6..+0.2 m and no fixed height separates it from obstacles. With
+        # the cloud added, the floor filled this costmap with lethal cells.
+        # The scan is cut relative to base_link instead (robot.launch.py).
+        observation_sources: scan
         scan:
           topic: /scan
           max_obstacle_height: 2.0
@@ -229,22 +234,6 @@ local_costmap:
           raytrace_min_range: 0.1
           obstacle_max_range: 19.0
           obstacle_min_range: 0.5  # the robot's own body (see robot.launch.py range_min)
-        # The full 3D lidar cloud, so obstacles above or below the 2D scan's
-        # slice (table edges, low boxes) count too.
-        pointcloud:
-          topic: /point_cloud2
-          data_type: "PointCloud2"
-          # The driver publishes the cloud in odom; measure ranges and clear
-          # rays from the robot instead of from the odom origin.
-          sensor_frame: base_link
-          min_obstacle_height: 0.1  # above the floor (odom z = 0)
-          max_obstacle_height: 0.8  # anything higher, the robot walks under
-          clearing: True
-          marking: True
-          raytrace_max_range: 10.0
-          raytrace_min_range: 0.5
-          obstacle_max_range: 8.0
-          obstacle_min_range: 0.5
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -283,9 +272,7 @@ global_costmap:
         origin_z: -1.0
         z_resolution: 0.2
         z_voxels: 15
-        # No pointcloud source here, unlike local_costmap: its obstacle heights
-        # assume the floor is at z = 0, which holds in odom but not in map.
-        # The controller avoids with the local costmap's cloud.
+        # Scan only, like local_costmap (see there for why not the cloud).
         observation_sources: scan
         scan:
           # Absolute: a relative "scan" resolves to /global_costmap/scan, which
