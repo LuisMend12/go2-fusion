@@ -56,7 +56,14 @@ ros2 run go2_auto_mapper explorer
    as wide as its body. If one stays there for `blocked_timeout` seconds,
    it cancels the goal, backs up `backup_distance`, and for the next 30
    seconds avoids that heading and prefers the longest open walk on offer.
-7. Once the map has no frontiers left, it logs "Exploration complete" and
+7. **When stuck, it heads for open space.** Stuck means `stuck_failure_count`
+   (3) goals failed in a row, an obstacle-ahead abort, or "No usable goal"
+   twice running. It then finds the nearest known-free spot with at least
+   `open_space_clearance` (0.8 m) of room on every side, searching through
+   free space up to 4 m away (so not through walls), drives there, scans,
+   and carries on exploring. A failed escape doesn't trigger another one,
+   and escapes are at least 30 s apart.
+8. Once the map has no frontiers left, it logs "Exploration complete" and
    stops sending goals (it keeps watching, in case new frontiers appear
    later — e.g. after a door opens or the robot is manually moved).
 
@@ -112,6 +119,8 @@ whatever Nav2 was commanding.
 | `obstacle_stop_distance` | `0.3` | Gap (meters) in front of the nose that counts as blocked |
 | `blocked_timeout` | `2.0` | Seconds blocked before giving up the goal (a brief glance at a wall while turning is normal) |
 | `backup_distance` | `0.3` | How far (meters) to back up after giving up a blocked goal |
+| `open_space_clearance` | `0.8` | Room (meters) on every side that counts as open space when stuck |
+| `stuck_failure_count` | `3` | Failed goals in a row that count as stuck |
 | `scan_on_start` | `true` | Turn a full circle before exploring |
 | `scan_after_goal` | `true` | Turn a full circle after each goal it reaches |
 | `scan_yaw` | `6.283` (2π) | How far to turn per scan, in radians |
