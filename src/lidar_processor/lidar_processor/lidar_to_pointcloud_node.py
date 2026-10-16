@@ -20,7 +20,11 @@ from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_srvs.srv import Trigger
+import tf2_ros
+from tf2_ros import TransformException
 import open3d as o3d
+
+from lidar_processor.frame_transform import transform_points
 
 
 @dataclass
@@ -115,6 +119,9 @@ class LidarToPointCloudNode(Node):
         
         # Initialize components
         self.aggregator = PointCloudAggregator(self.config)
+        self.map_frame = self.get_parameter('map_frame').get_parameter_value().string_value
+        self.tf_buffer = tf2_ros.Buffer(cache_time=rclpy.duration.Duration(seconds=10))
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         
         # Setup QoS profile for high-frequency data
         self.qos_profile = QoSProfile(
@@ -172,6 +179,10 @@ class LidarToPointCloudNode(Node):
         self.declare_parameter('max_points', 1000000)
         self.declare_parameter('voxel_size', 0.01)
         self.declare_parameter('publish_rate', 5.0)
+        # Saved .ply coordinates are in this frame. The live cloud stays in
+        # odom; each save applies the latest transform, so a loop closure
+        # moves the file with the map.
+        self.declare_parameter('map_frame', 'map')
     
     def _load_configuration(self) -> LidarConfig:
         """Load configuration from parameters"""
@@ -289,7 +300,14 @@ class LidarToPointCloudNode(Node):
             points = self.aggregator.get_points_copy()
             if not points:
                 return
-            
+
+            source_frame = 'odom'
+            if self._last_header is not None and self._last_header.frame_id:
+                source_frame = self._last_header.frame_id
+            points = self._points_in_map(points, source_frame)
+            if points is None:
+                return
+
             # Create Open3D point cloud
             point_cloud = o3d.geometry.PointCloud()
             point_cloud.points = o3d.utility.Vector3dVector(points)
@@ -310,19 +328,50 @@ class LidarToPointCloudNode(Node):
                 
                 self.get_logger().info(
                     f"💾 Saved map: {map_filename} "
-                    f"({point_count} downsampled / {total_points} total points)"
+                    f"({point_count} downsampled / {total_points} total points, "
+                    f"{self.map_frame} frame)"
                 )
             else:
                 self.get_logger().error(f"Failed to save map: {map_filename}")
                 
         except Exception as e:
             self.get_logger().error(f"Error saving map: {e}")
-    
+
+    def _points_in_map(self, points, source_frame):
+        """Copy of `points` in map_frame, or None if that transform is not up.
+
+        Stored points stay in the cloud frame. The file is rewritten from
+        them with the transform as it is now, so a loop closure shifts the
+        whole .ply. Nothing is deleted to refresh a moved obstacle.
+        """
+
+        if source_frame == self.map_frame:
+            return points
+        try:
+            stamped = self.tf_buffer.lookup_transform(
+                self.map_frame, source_frame, rclpy.time.Time()
+            )
+        except TransformException:
+            self.get_logger().warn(
+                f'No {self.map_frame} <- {source_frame} yet; '
+                'not writing the 3D map in the cloud frame.',
+                throttle_duration_sec=5.0,
+            )
+            return None
+        translation = stamped.transform.translation
+        rotation = stamped.transform.rotation
+        return transform_points(
+            points,
+            (translation.x, translation.y, translation.z),
+            (rotation.x, rotation.y, rotation.z, rotation.w),
+        )
+
     def _log_configuration(self) -> None:
         """Log current configuration"""
         self.get_logger().info("🗺️  LiDAR Processor Configuration:")
         self.get_logger().info(f"   Robot IPs: {self.config.robot_ip_list}")
         self.get_logger().info(f"   Map name: {self.config.map_name}")
+        self.get_logger().info(f"   Map frame: {self.map_frame}")
         self.get_logger().info(f"   Save map: {self.config.save_map}")
         self.get_logger().info(f"   Publish rate: {self.config.publish_rate} Hz")
         if self.config.save_map:

@@ -148,6 +148,22 @@ def assess_recovery(grid, x, y, yaw, distance, scan, scan_age, max_age):
     return move, ''
 
 
+def latch_decision(forward_blocked, move):
+    """What a latched stop should do with one new fresh scan.
+
+    `forward_blocked` is whether something is still within the stop distance
+    ahead. `move` is a recovery translation, or None when no direction is
+    safe. Returns 'resume' (the block is gone), 'move' (a direction opened),
+    or 'hold' (stay stopped).
+    """
+
+    if not forward_blocked:
+        return 'resume'
+    if move is None:
+        return 'hold'
+    return 'move'
+
+
 def refresh_status(now, stop_time, timeout, stamps, need_map):
     """Whether sensing has updated since the robot stopped.
 

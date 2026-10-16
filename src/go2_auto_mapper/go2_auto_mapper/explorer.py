@@ -23,6 +23,7 @@ from go2_auto_mapper.recovery import (
     SCAN_MAX_AGE_SEC,
     SLAM_MIN_TRAVEL_M,
     assess_recovery,
+    latch_decision,
     refresh_status,
     scan_covers_move,
     swept_clear,
@@ -159,6 +160,9 @@ class FrontierExplorer(Node):
         self.refresh_after = None
         self.recovery_move = None
         self.recovery_fault = None
+        # Scan stamp already judged for the current latch. A newer scan can
+        # clear it; the one that caused the stop cannot.
+        self.fault_checked_stamp = None
         # Own twist_mux input (priority 6): above Nav2, below keyboard and joystick.
         self.recovery_pub = self.create_publisher(Twist, '/cmd_vel_mapper', 10)
         sensor_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -1048,6 +1052,7 @@ class FrontierExplorer(Node):
             self.current_goal_handle.cancel_goal_async()
 
         self.recovery_fault = None
+        self.fault_checked_stamp = None
         self.refresh_after = None
         self.failed_goals = []
         self.dead_frontiers = []
@@ -1102,9 +1107,66 @@ class FrontierExplorer(Node):
 
     def _stop_for(self, reason):
         self.recovery_fault = reason
+        self.fault_checked_stamp = self._ros_stamp('scan')
         self._hold_stop()
         self.get_logger().error(
-            f'Recovery stopped: {reason} Request Scan to retry.'
+            f'Recovery stopped: {reason} '
+            'A later fresh scan can clear this; Scan clears it now.'
+        )
+
+    def _consider_clearing_fault(self):
+        """A latched stop stays put until a new fresh scan changes the picture.
+
+        If the way ahead is clear, exploration may continue. If it is still
+        blocked but a rear or side corridor is open, take that move. The same
+        scan is not judged twice.
+        """
+
+        self._hold_stop()
+        scan = self.latest_scan
+        age = self._scan_age()
+        stamp = self._ros_stamp('scan')
+        if scan is None or age is None or age > SCAN_MAX_AGE_SEC or stamp is None:
+            return
+        if self.fault_checked_stamp is not None and stamp <= self.fault_checked_stamp:
+            return
+        if scan.header.frame_id != self.robot_frame:
+            self.fault_checked_stamp = stamp
+            return
+        view = self.local_view()
+        if view is None:
+            return
+        self.fault_checked_stamp = stamp
+        gap = free_distance_ahead(
+            view[0], view[1], view[2], view[3], self.obstacle_stop_distance
+        )
+        distance = min(max(float(self.backup_distance), 0.05), 0.5)
+        move = None
+        if gap is not None:
+            move, _reason = assess_recovery(
+                *view[:4], distance, scan, age, SCAN_MAX_AGE_SEC
+            )
+        decision = latch_decision(gap is not None, move)
+        if decision == 'hold':
+            self.get_logger().info(
+                'Still stopped: no safe direction on the latest scan.',
+                throttle_duration_sec=10.0,
+            )
+            return
+        reason = self.recovery_fault
+        self.recovery_fault = None
+        if decision == 'resume':
+            self.get_logger().info(
+                f'Recovery latch cleared; forward is clear (was: {reason}).'
+            )
+            return
+        grid, x, y, yaw, _ = view
+        self.recovery_move = (
+            x, y, yaw, move, grid.header.frame_id, time.monotonic()
+        )
+        self.get_logger().info(
+            f'Fresh scan opened a way out: x={move[0]:.2f}, y={move[1]:.2f} m '
+            f'(was: {reason}).'
         )
 
     def _scan_age(self):
@@ -1329,7 +1391,10 @@ class FrontierExplorer(Node):
             if self.recovery_move is not None:
                 self.tick_recovery()
                 return
-            if self.recovery_fault or self.refresh_after is not None:
+            if self.recovery_fault:
+                self._consider_clearing_fault()
+                return
+            if self.refresh_after is not None:
                 # Keep publishing zero: twist_mux would otherwise fall through
                 # to Nav2 half a second after the last command.
                 self._hold_stop()

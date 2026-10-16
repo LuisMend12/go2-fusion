@@ -6,6 +6,7 @@ from go2_auto_mapper.recovery import (
     SCAN_MAX_AGE_SEC,
     assess_recovery,
     choose_recovery,
+    latch_decision,
     refresh_status,
     scan_covers_move,
     swept_clear,
@@ -132,6 +133,12 @@ def test_refresh_times_out_and_names_what_is_missing():
     assert reason.startswith('timed out waiting for fresh')
     assert 'cloud' in reason and 'costmap' in reason
     assert 'scan' not in reason
+
+
+def test_latch_clears_only_when_the_new_scan_changes_the_block():
+    assert latch_decision(True, None) == 'hold'
+    assert latch_decision(True, (-0.3, 0.0)) == 'move'
+    assert latch_decision(False, None) == 'resume'
 
 
 def test_short_move_does_not_wait_for_slam_map():

@@ -74,7 +74,9 @@ ros2 run go2_auto_mapper explorer
    publishes on `/cmd_vel_mapper`, a twist_mux input at priority 6: below
    keyboard and joystick, above Nav2. The scan must be in `base_link`.
    If no direction is safe, or the robot drifts, or clearance disappears,
-   it stays stopped and logs the reason. **Scan** clears that latch.
+   it stays stopped and logs the reason. A later fresh scan clears that
+   latch when the way ahead is open, or starts another short move when a
+   rear or side corridor has opened. **Scan** clears the latch immediately.
    After a move it stays stopped until a newer `/scan`, live `/point_cloud2`,
    local costmap, and map/odom transforms arrive. A new SLAM `/map` is
    required only when the move was at least 0.2 m (slam_toolbox's minimum
