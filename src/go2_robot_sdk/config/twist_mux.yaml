@@ -37,7 +37,7 @@
         topic   : cmd_vel
         timeout : 0.5
         priority: 5
-      mapper:
+      mapper:  # go2_auto_mapper recovery: beats Nav2, loses to keyboard and joystick
         topic   : cmd_vel_mapper
         timeout : 0.5
         priority: 6

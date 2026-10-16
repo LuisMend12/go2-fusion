@@ -65,17 +65,22 @@ ros2 run go2_auto_mapper explorer
    declares itself stuck.
 6. When the forward path is blocked, the explorer cancels navigation and
    evaluates short backward, left and right translations. It checks the full
-   padded footprint (0.81 x 0.40 m body plus 5 cm margin), unknown cells,
-   current scan coverage, sensor timestamps and TF freshness. It chooses a
-   safe corridor with the most extra clearance, moves at 0.10 m/s for at most
-   8 seconds and 0.5 m, and rechecks at 4 Hz. The configured
-   `backup_distance` controls the translation distance (clamped to 0.05?0.5 m).
-   Recovery publishes on `/cmd_vel_mapper`, a dedicated twist_mux input at
-   priority 6, below manual controls and above Nav2. The scan must be in
-   `base_link`; missing, infinite or invalid returns cannot prove clearance.
-   No safe route, stale data, pose drift or new obstacles latch a stopped
-   state. Request **Scan** to retry after resolving the cause.
-   After repositioning it scans before continuing toward open space.
+   padded footprint (body 0.36 m forward, 0.45 m back, 0.40 m wide, plus a
+   5 cm margin) against the live `/scan` and Nav2's local costmap. Unknown
+   cells, missing rays, infinite returns, and a scan older than 0.75 s are
+   unsafe. It chooses a safe corridor with the most extra clearance, moves
+   at 0.10 m/s for at most 8 seconds, and rechecks at 4 Hz. The configured
+   `backup_distance` is that translation (clamped to 0.05–0.5 m). Recovery
+   publishes on `/cmd_vel_mapper`, a twist_mux input at priority 6: below
+   keyboard and joystick, above Nav2. The scan must be in `base_link`.
+   If no direction is safe, or the robot drifts, or clearance disappears,
+   it stays stopped and logs the reason. **Scan** clears that latch.
+   After a move it stays stopped until a newer `/scan`, live `/point_cloud2`,
+   local costmap, and map/odom transforms arrive. A new SLAM `/map` is
+   required only when the move was at least 0.2 m (slam_toolbox's minimum
+   travel); a shorter move does not publish one. The accumulated 3D map is
+   not reset. Obstacles that moved or disappeared are cleared by the costmap
+   voxel layer raytracing `/scan` (`clearing: true` in `nav2_params.yaml`).
 7. **When stuck, it heads for open space.** Stuck means `stuck_failure_count`
    (3) goals failed in a row, an obstacle-ahead abort, or "No usable goal"
    twice running. It then finds the nearest known-free spot with at least
