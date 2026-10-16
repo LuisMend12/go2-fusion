@@ -63,15 +63,19 @@ ros2 run go2_auto_mapper explorer
    is one the scan can't see into, and the frontier is skipped for the same
    2 minutes as a failed goal instead of being revisited until the robot
    declares itself stuck.
-6. It checks the local costmap 4 times a second for an obstacle within
-   `obstacle_stop_distance` of the robot's nose, in a strip as wide as its
-   body, and **always backs up** (`backup_distance`) when it finds one.
-   While driving to a goal it gives the goal up first (after
-   `blocked_timeout`, default 0 = at once), then heads for open space and
-   for the next 30 seconds avoids that heading. While idle it backs up
-   straight away, at most once every 5 s (in case the space behind is
-   blocked too). During a turn or back-up it leaves collision checks to
-   Nav2.
+6. When the forward path is blocked, the explorer cancels navigation and
+   evaluates short backward, left and right translations. It checks the full
+   padded footprint (0.81 x 0.40 m body plus 5 cm margin), unknown cells,
+   current scan coverage, sensor timestamps and TF freshness. It chooses a
+   safe corridor with the most extra clearance, moves at 0.10 m/s for at most
+   8 seconds and 0.5 m, and rechecks at 4 Hz. The configured
+   `backup_distance` controls the translation distance (clamped to 0.05?0.5 m).
+   Recovery publishes on `/cmd_vel_mapper`, a dedicated twist_mux input at
+   priority 6, below manual controls and above Nav2. The scan must be in
+   `base_link`; missing, infinite or invalid returns cannot prove clearance.
+   No safe route, stale data, pose drift or new obstacles latch a stopped
+   state. Request **Scan** to retry after resolving the cause.
+   After repositioning it scans before continuing toward open space.
 7. **When stuck, it heads for open space.** Stuck means `stuck_failure_count`
    (3) goals failed in a row, an obstacle-ahead abort, or "No usable goal"
    twice running. It then finds the nearest known-free spot with at least
@@ -159,3 +163,27 @@ ros2 run go2_auto_mapper explorer --ros-args -p min_frontier_size:=10
   real Sit command (API 1009) to `/webrtc_req`.
 - Frontier detection rescans the entire map every cycle, so very large
   maps will make each exploration step progressively slower.
+
+## Refreshing observations after movement
+
+After each scan, exploration waits for source timestamps newer than the end
+of the scan on `/scan`, `/point_cloud2`, `/map` and `/local_costmap/costmap`,
+plus fresh robot TF. A 20-second timeout leaves exploration stopped until a
+new Scan request. Escape goals always trigger a scan, even when
+`scan_after_goal` is false. A failed scan also leaves exploration stopped.
+
+The existing point-cloud-to-laserscan and SLAM pipelines continue running
+throughout recovery. SLAM updates the 2D occupancy map, while Nav2's existing
+raytracing clears observed obstacles in its obstacle layers. Unknown local
+costmap cells remain unknown so recovery cannot treat them as free.
+The driver publishes an accumulated 3D cloud; receiving a fresh cloud does
+not guarantee removal of historical points. Neither SLAM's structural map
+nor the accumulated 3D cloud is reset or promised to clear moving objects.
+This change does not introduce a persistent 3D mapping system. The scan's
+existing height filter also limits which obstacles recovery can observe.
+
+Validate without a robot from `docker/` on Windows:
+
+```powershell
+docker compose -f docker-compose.windows.yml run --rm unitree_ros bash -c 'python3 -m pytest /ros2_ws/src/go2_auto_mapper/test'
+```

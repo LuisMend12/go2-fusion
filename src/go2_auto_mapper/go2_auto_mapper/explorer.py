@@ -14,7 +14,9 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 
 from nav_msgs.msg import OccupancyGrid
 from std_srvs.srv import Trigger
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
+from sensor_msgs.msg import LaserScan, PointCloud2
+from go2_auto_mapper.recovery import choose_recovery, swept_clear, scan_covers_move
 
 from builtin_interfaces.msg import Duration
 from nav2_msgs.action import BackUp, NavigateToPose, Spin
@@ -140,6 +142,18 @@ class FrontierExplorer(Node):
         # -----------------------------
 
         self.map = None
+        self.observed = {}
+        self.latest_scan = None
+        self.refresh_after = None
+        self.recovery_move = None
+        self.recovery_fault = False
+        self.recovery_pub = self.create_publisher(Twist, '/cmd_vel_mapper', 10)
+        sensor_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.scan_sub = self.create_subscription(
+            LaserScan, '/scan', lambda msg: self.observe('scan', msg), sensor_qos)
+        self.cloud_sub = self.create_subscription(
+            PointCloud2, '/point_cloud2', lambda msg: self.observe('cloud', msg), sensor_qos)
+
 
         # /map is latched. A volatile subscription misses the grid that was
         # published before this node started.
@@ -293,11 +307,15 @@ class FrontierExplorer(Node):
             return
 
         self.map = msg
+        self.observe('map', msg)
 
     def local_costmap_callback(self, msg):
 
         if msg.info.width and msg.info.height and msg.info.resolution > 0.0:
+            if len(msg.data) < msg.info.width * msg.info.height:
+                return
             self.local_costmap = msg
+            self.observe('costmap', msg)
 
     # ==========================================================
     # GET ROBOT POSITION
@@ -307,9 +325,14 @@ class FrontierExplorer(Node):
         """(x, y, yaw) of the robot in `frame`, or None if TF can't tell."""
 
         try:
-            t = self.tf_buffer.lookup_transform(
+            stamped = self.tf_buffer.lookup_transform(
                 frame, self.robot_frame, rclpy.time.Time()
-            ).transform
+            )
+            stamp = stamped.header.stamp
+            age = self.get_clock().now().nanoseconds * 1e-9 - (stamp.sec + stamp.nanosec * 1e-9)
+            if age < 0 or age > 1.0:
+                return None
+            t = stamped.transform
         except TransformException:
             return None
 
@@ -325,7 +348,7 @@ class FrontierExplorer(Node):
         to add to a map-frame heading to get a costmap-frame one. None until
         Nav2 publishes a costmap and TF has both poses."""
 
-        if self.local_costmap is None:
+        if self.local_costmap is None or not self.data_fresh(('costmap', 'scan')):
             return None
 
         local_pose = self.get_robot_pose(self.local_costmap.header.frame_id)
@@ -944,7 +967,7 @@ class FrontierExplorer(Node):
                 )
                 self.consecutive_failures = 0
 
-                if self.scan_after_goal:
+                if self.scan_after_goal or self.goal_is_escape:
                     self.scan_pending = True
 
                 # Check the target frontier shrank, after the scan if there
@@ -998,6 +1021,8 @@ class FrontierExplorer(Node):
             self.goal_cancelled_for_scan = True
             self.current_goal_handle.cancel_goal_async()
 
+        self.recovery_fault = False
+        self.refresh_after = None
         self.failed_goals = []
         self.dead_frontiers = []
         self.blocked_time = None
@@ -1028,23 +1053,74 @@ class FrontierExplorer(Node):
             self.scan_pending = False
             self.get_logger().info('Turning in place to scan the surroundings.')
 
+    def observe(self, name, msg):
+        if name == 'scan':
+            self.latest_scan = msg
+        stamp = msg.header.stamp
+        self.observed[name] = (time.monotonic(), stamp.sec + stamp.nanosec * 1e-9)
+
+    def data_fresh(self, names, after=None):
+        now = time.monotonic()
+        ros_now = self.get_clock().now().nanoseconds * 1e-9
+        return all(name in self.observed
+                   and now - self.observed[name][0] < 3.0
+                   and 0 <= ros_now - self.observed[name][1] < 3.0
+                   and (after is None or self.observed[name][1] > after)
+                   for name in names)
+
     def start_backup(self):
-
-        goal = BackUp.Goal()
-        goal.target.x = float(self.backup_distance)
-        goal.speed = BACKUP_SPEED_MPS
-        goal.time_allowance = Duration(sec=int(BACKUP_TIME_ALLOWANCE_SEC))
-
-        # Clear the flag even if Nav2 isn't ready: backing away is a nicety,
-        # and waiting for it would stall exploring.
+        """Short rear/side translation on the mapper's own mux input."""
         self.backup_pending = False
         self.last_backup_time = time.monotonic()
-        if self.start_maneuver(
-            self.backup_client, goal, 'Back-up', BACKUP_TIME_ALLOWANCE_SEC
-        ):
-            self.get_logger().info(
-                f'Backing up {self.backup_distance:.1f} m from the obstacle.'
-            )
+        view = self.local_view()
+        move = None
+        if view is not None and self.latest_scan.header.frame_id == self.robot_frame:
+            move = choose_recovery(
+                *view[:4], min(max(float(self.backup_distance), 0.05), 0.5),
+                scan=self.latest_scan)
+        if move is None:
+            self.recovery_fault = True
+            self.get_logger().error('Recovery stopped: no fresh, known-clear rear/side corridor. Request Scan to retry.')
+            return
+        grid, x, y, yaw, _ = view
+        self.recovery_move = (x, y, yaw, move, grid.header.frame_id, time.monotonic())
+        self.get_logger().info(f'Recovery translation: x={move[0]:.2f}, y={move[1]:.2f} m.')
+
+    def tick_recovery(self):
+        x, y, yaw, move, frame, started = self.recovery_move
+        pose = self.get_robot_pose(frame)
+        view = self.local_view()
+        failed = pose is None or view is None or time.monotonic() - started > 8.0
+        distance = math.hypot(*move)
+        progress = 0.0
+        if pose is not None:
+            bx = (pose[0]-x)*math.cos(yaw)+(pose[1]-y)*math.sin(yaw)
+            by = -(pose[0]-x)*math.sin(yaw)+(pose[1]-y)*math.cos(yaw)
+            progress = (bx*move[0]+by*move[1])/distance
+            failed |= abs(bx*move[1]-by*move[0])/distance > 0.1
+            failed |= angle_difference(pose[2], yaw) > 0.15
+        if not failed and progress < distance:
+            remaining = max(0.10, distance-progress)
+            failed = (self.latest_scan.header.frame_id != self.robot_frame
+                      or not scan_covers_move(self.latest_scan,
+                                              move[0]*remaining/distance,
+                                              move[1]*remaining/distance))
+            failed |= not swept_clear(*view[:4],
+                                     move[0]*remaining/distance,
+                                     move[1]*remaining/distance)
+        command = Twist()
+        if failed or progress >= distance:
+            self.recovery_pub.publish(command)
+            self.recovery_move = None
+            self.recovery_fault = failed
+            if failed:
+                self.get_logger().error('Recovery stopped: clearance, odometry or sensor check failed. Request Scan to retry.')
+            else:
+                self.scan_pending = True
+            return
+        command.linear.x = 0.10*move[0]/distance
+        command.linear.y = 0.10*move[1]/distance
+        self.recovery_pub.publish(command)
 
     def start_maneuver(self, client, goal, name, time_allowance):
         """Send a Nav2 behavior goal; False if its server isn't up yet."""
@@ -1070,11 +1146,13 @@ class FrontierExplorer(Node):
         try:
             goal_handle = future.result()
         except Exception as e:
+            self.recovery_fault = True
             self.get_logger().warn(f'{self.maneuver_name} failed to start: {e}')
             self.finish_maneuver()
             return
 
         if not goal_handle.accepted:
+            self.recovery_fault = True
             self.get_logger().warn(
                 f'Nav2 rejected the {self.maneuver_name}; skipping it.'
             )
@@ -1090,6 +1168,8 @@ class FrontierExplorer(Node):
 
         try:
             status = future.result().status
+            if self.maneuver_name == 'Scan' and status != 4:
+                self.recovery_fault = True
             if status == 4:
                 self.get_logger().info(f'{self.maneuver_name} complete.')
             else:
@@ -1100,11 +1180,16 @@ class FrontierExplorer(Node):
                     'continuing.'
                 )
         except Exception as e:
+            self.recovery_fault = True
             self.get_logger().warn(f'{self.maneuver_name} result error: {e}')
 
         self.finish_maneuver()
 
     def finish_maneuver(self):
+
+        if self.maneuver_name == 'Scan':
+            self.refresh_after = (self.get_clock().now().nanoseconds * 1e-9,
+                                  time.monotonic())
 
         self.maneuver_handle = None
         self.maneuver_active = False
@@ -1125,6 +1210,11 @@ class FrontierExplorer(Node):
         """
 
         try:
+            if self.recovery_move is not None:
+                self.tick_recovery()
+                return
+            if self.recovery_fault or self.refresh_after is not None:
+                return
             if self.maneuver_active:
                 self.blocked_since = None
                 return
@@ -1175,6 +1265,10 @@ class FrontierExplorer(Node):
         except Exception as e:
             # Same reason as exploration_loop: never let a callback error
             # crash the node while a goal is in flight.
+            if self.recovery_move is not None:
+                self.recovery_pub.publish(Twist())
+                self.recovery_move = None
+                self.recovery_fault = True
             self.get_logger().error(f'Obstacle watch error: {e}')
 
     def back_away_while_idle(self, gap):
@@ -1275,6 +1369,19 @@ class FrontierExplorer(Node):
 
     def _exploration_loop_impl(self):
 
+        if self.recovery_move is not None or self.recovery_fault:
+            return
+        if self.refresh_after is not None:
+            stamp, started = self.refresh_after
+            if (self.data_fresh(('scan', 'cloud', 'map', 'costmap'), stamp)
+                    and self.get_robot_pose(self.map_frame) is not None):
+                self.refresh_after = None
+            else:
+                if time.monotonic() - started > 20.0:
+                    self.recovery_fault = True
+                    self.get_logger().error('Map refresh timed out; stopped. Request Scan to retry.')
+                return
+
         # Maneuvers only need odometry, not the map, so the startup scan runs
         # before SLAM has a map: turning in place is what gives it one.
         if self.maneuver_active:
@@ -1284,12 +1391,13 @@ class FrontierExplorer(Node):
                 > self.maneuver_time_allowance + 10.0
             ):
                 self.get_logger().warn(
-                    f'No {self.maneuver_name} result, continuing without it.'
+                    f'No {self.maneuver_name} result; stopping exploration.'
                 )
                 # Cancel it in Nav2 too, so it can't keep turning or backing
                 # up underneath the next goal.
                 if self.maneuver_handle is not None:
                     self.maneuver_handle.cancel_goal_async()
+                self.recovery_fault = True
                 self.finish_maneuver()
             return
 
@@ -1297,6 +1405,9 @@ class FrontierExplorer(Node):
             # Back away first, then head for open space, then look around.
             if self.backup_pending:
                 self.start_backup()
+                return
+            if self.scan_pending:
+                self.start_scan()
                 return
             if self.escape_pending:
                 self.start_escape()
@@ -1421,6 +1532,7 @@ class FrontierExplorer(Node):
             self.goal_frontier = (keys, len(keys))
 
     def stop(self):
+        self.recovery_pub.publish(Twist())
         # Cancel whatever Nav2 goal is in flight so the robot doesn't
         # keep walking toward it after we've stopped sending new ones.
         # rclpy.spin() has already returned by the time this runs, so we

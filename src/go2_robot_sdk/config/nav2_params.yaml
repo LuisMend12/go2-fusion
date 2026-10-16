@@ -203,6 +203,7 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: False
+      track_unknown_space: true
       rolling_window: true
       width: 20
       height: 20
