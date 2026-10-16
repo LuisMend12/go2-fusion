@@ -60,6 +60,14 @@ ros2 run go2_auto_mapper explorer
    stops sending goals (it keeps watching, in case new frontiers appear
    later — e.g. after a door opens or the robot is manually moved).
 
+To scan on demand, press **Scan** in the RViz AutoMapper panel, or:
+```shell
+ros2 service call /frontier_explorer/scan std_srvs/srv/Trigger
+```
+It pauses the current goal (without counting it as failed), forgets
+recently failed spots so they get another try with the fresh data, and
+turns 360 degrees. Useful when the explorer reports "No usable goal".
+
 If Nav2 rejects or fails a goal (e.g. it was too close to an obstacle), that
 spot is blacklisted for 2 minutes so the explorer doesn't keep retrying the
 same bad locations.
