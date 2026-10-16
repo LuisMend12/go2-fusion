@@ -233,7 +233,7 @@ local_costmap:
           raytrace_max_range: 19.5
           raytrace_min_range: 0.1
           obstacle_max_range: 19.0
-          obstacle_min_range: 0.5  # the robot's own body (see robot.launch.py range_min)
+          obstacle_min_range: 0.1  # matches /scan range_min (robot.launch.py)
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -285,7 +285,7 @@ global_costmap:
           raytrace_max_range: 20.0
           raytrace_min_range: 0.1
           obstacle_max_range: 18.0
-          obstacle_min_range: 0.5  # the robot's own body (see robot.launch.py range_min)
+          obstacle_min_range: 0.1  # matches /scan range_min (robot.launch.py)
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"

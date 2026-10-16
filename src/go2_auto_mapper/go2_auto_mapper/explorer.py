@@ -136,8 +136,8 @@ class FrontierExplorer(Node):
             map_qos
         )
 
-        # Nav2's local costmap (odom frame): the scan and 3D point cloud
-        # merged, i.e. what the controller itself avoids.
+        # Nav2's local costmap (odom frame): built from /scan, i.e. what the
+        # controller itself avoids.
         self.local_costmap = None
         self.local_costmap_sub = self.create_subscription(
             OccupancyGrid,
@@ -728,6 +728,8 @@ class FrontierExplorer(Node):
             self.goal_response_callback
         )
 
+        return True
+
     # ==========================================================
     # NAV2 RESPONSE
     # ==========================================================
@@ -1126,6 +1128,10 @@ class FrontierExplorer(Node):
                 self.get_logger().warn(
                     f'No {self.maneuver_name} result, continuing without it.'
                 )
+                # Cancel it in Nav2 too, so it can't keep turning or backing
+                # up underneath the next goal.
+                if self.maneuver_handle is not None:
+                    self.maneuver_handle.cancel_goal_async()
                 self.finish_maneuver()
             return
 
@@ -1163,6 +1169,10 @@ class FrontierExplorer(Node):
                 'No Nav2 result after '
                 f'{self.goal_timeout_sec:.0f}s, treating goal as stalled.'
             )
+            # Cancel it in Nav2 too: just forgetting it would leave Nav2
+            # driving there while we start a turn, back-up or new goal.
+            if self.current_goal_handle is not None:
+                self.current_goal_handle.cancel_goal_async()
             self.record_goal_failure()
             self.current_goal_handle = None
             self.goal_active = False

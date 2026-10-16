@@ -1,7 +1,7 @@
 """Reads Nav2's local costmap to tell what is in front of the robot.
 
-The local costmap (/local_costmap/costmap) already merges the 2D scan and
-the 3D point cloud, so this sees the same obstacles the controller avoids.
+The local costmap (/local_costmap/costmap) is built from /scan, so this sees
+the same obstacles the controller avoids.
 Functions take the grid and a pose in the grid's frame (odom); they don't
 touch ROS, so they can be tested with a hand-made grid.
 """

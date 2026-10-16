@@ -182,11 +182,12 @@ class Go2NodeFactory:
                     # smears them), so -0.1 keeps the floor out.
                     'min_height': -0.1,
                     'max_height': 0.5,
-                    # The lidar sees the robot's own body. Without this, SLAM
-                    # maps those points as walls under the robot, and Nav2
-                    # fails every plan with "Starting point in lethal space".
-                    # 0.5 m clears the footprint's farthest corner (0.49 m).
-                    'range_min': 0.5,
+                    # Small, not 0.5: the robot's own cloud has no points on
+                    # its body (measured), and a 0.5 m cutoff hid walls right
+                    # beside the robot. After Nav2's recoveries cleared the
+                    # costmaps, those walls vanished and the robot turned or
+                    # backed into them. Costmaps clear the footprint anyway.
+                    'range_min': 0.1,
                 }],
                 output='screen',
             )
