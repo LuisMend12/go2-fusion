@@ -1057,6 +1057,12 @@ class FrontierExplorer(Node):
         )
 
         if selected is None:
+            self.get_logger().info(
+                'No usable goal: every frontier is too close to a wall or '
+                'failed recently. Waiting for the map to change or for '
+                f'failed spots to expire ({self.failed_goal_cooldown_sec:.0f} s).',
+                throttle_duration_sec=10.0
+            )
             return
 
         score, x, y, size = selected

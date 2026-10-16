@@ -171,6 +171,12 @@ class Go2NodeFactory:
                 ],
                 parameters=[{
                     'target_frame': 'base_link',
+                    # Heights are relative to base_link (~0.3-0.4 m up). The
+                    # default min_height (~0) dropped everything lower than
+                    # the body, so low obstacles were invisible. Floor points
+                    # reach up to ~0.28 m below base_link (odometry z drift
+                    # smears them), so -0.1 keeps the floor out.
+                    'min_height': -0.1,
                     'max_height': 0.5,
                     # The lidar sees the robot's own body. Without this, SLAM
                     # maps those points as walls under the robot, and Nav2
