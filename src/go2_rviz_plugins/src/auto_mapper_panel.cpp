@@ -20,28 +20,20 @@ namespace
 // Nav2 goal) before giving up and force-killing the process.
 constexpr int kGracefulStopTimeoutMs = 5000;
 
-// Re-enable a service button if the node never answers the request.
-constexpr int kServiceReplyTimeoutMs = 5000;
+// Re-enable the Scan button if the explorer never answers the request.
+constexpr int kScanReplyTimeoutMs = 5000;
 
 constexpr char kScanService[] = "/frontier_explorer/scan";
-constexpr char kResetMapService[] = "/lidar_to_pointcloud/reset";
-
-constexpr char kScanLabel[] = "Scan";
-constexpr char kResetMapLabel[] = "Reset 3D map";
 }  // namespace
 
 AutoMapperPanel::AutoMapperPanel(QWidget * parent)
 : rviz_common::Panel(parent)
 {
   start_stop_button_ = new QPushButton("Start", this);
-  scan_button_ = new QPushButton(kScanLabel, this);
+  scan_button_ = new QPushButton("Scan", this);
   scan_button_->setToolTip(
     "Turn the robot 360 degrees so SLAM can re-place it on the map. "
     "Pauses the current goal; needs the explorer running.");
-  reset_map_button_ = new QPushButton(kResetMapLabel, this);
-  reset_map_button_->setToolTip(
-    "Clear the accumulated 3D point cloud (/pointcloud/aggregated, "
-    "3d_map.ply) and start it over. Doesn't touch the 2D SLAM map.");
   status_label_ = new QLabel("Stopped", this);
   log_view_ = new QPlainTextEdit(this);
   log_view_->setReadOnly(true);
@@ -50,7 +42,6 @@ AutoMapperPanel::AutoMapperPanel(QWidget * parent)
   auto * buttons = new QHBoxLayout();
   buttons->addWidget(start_stop_button_);
   buttons->addWidget(scan_button_);
-  buttons->addWidget(reset_map_button_);
 
   auto * layout = new QVBoxLayout(this);
   layout->addWidget(status_label_);
@@ -60,13 +51,11 @@ AutoMapperPanel::AutoMapperPanel(QWidget * parent)
 
   node_ = rclcpp::Node::make_shared("go2_rviz_auto_mapper_panel");
   scan_client_ = node_->create_client<std_srvs::srv::Trigger>(kScanService);
-  reset_map_client_ = node_->create_client<std_srvs::srv::Trigger>(kResetMapService);
   executor_.add_node(node_);
   spin_thread_ = std::thread([this]() {executor_.spin();});
 
   connect(scan_button_, &QPushButton::clicked, this, &AutoMapperPanel::onScanClicked);
-  connect(reset_map_button_, &QPushButton::clicked, this, &AutoMapperPanel::onResetMapClicked);
-  connect(this, &AutoMapperPanel::serviceReplied, this, &AutoMapperPanel::onServiceReplied);
+  connect(this, &AutoMapperPanel::scanReplied, this, &AutoMapperPanel::onScanReplied);
 
   process_ = new QProcess(this);
   process_->setProcessChannelMode(QProcess::SeparateChannels);
@@ -137,49 +126,27 @@ void AutoMapperPanel::onStartStopClicked()
 
 void AutoMapperPanel::onScanClicked()
 {
-  callTrigger(
-    scan_client_, scan_button_, kScanLabel,
-    "the explorer isn't running. Press Start first.");
-}
-
-void AutoMapperPanel::onResetMapClicked()
-{
-  callTrigger(
-    reset_map_client_, reset_map_button_, kResetMapLabel,
-    "lidar_to_pointcloud isn't running (it starts with robot.launch.py).");
-}
-
-void AutoMapperPanel::callTrigger(
-  const TriggerClient::SharedPtr & client, QPushButton * button,
-  const QString & label, const QString & not_running_hint)
-{
-  if (!client->service_is_ready()) {
-    appendLog(QString("[panel] %1: %2").arg(label, not_running_hint));
+  if (!scan_client_->service_is_ready()) {
+    appendLog("[panel] Scan: the explorer isn't running. Press Start first.");
     return;
   }
 
-  button->setEnabled(false);
-  QTimer::singleShot(kServiceReplyTimeoutMs, button, [button]() {button->setEnabled(true);});
+  scan_button_->setEnabled(false);
+  QTimer::singleShot(kScanReplyTimeoutMs, this, [this]() {scan_button_->setEnabled(true);});
 
   auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
-  client->async_send_request(
+  scan_client_->async_send_request(
     request,
-    [this, label](TriggerClient::SharedFuture future) {
+    [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
       const auto response = future.get();
-      emit serviceReplied(label, response->success, QString::fromStdString(response->message));
+      emit scanReplied(response->success, QString::fromStdString(response->message));
     });
 }
 
-QPushButton * AutoMapperPanel::buttonFor(const QString & label) const
+void AutoMapperPanel::onScanReplied(bool success, const QString & message)
 {
-  return label == kScanLabel ? scan_button_ : reset_map_button_;
-}
-
-void AutoMapperPanel::onServiceReplied(
-  const QString & label, bool success, const QString & message)
-{
-  buttonFor(label)->setEnabled(true);
-  appendLog(QString("[panel] %1: %2").arg(label, success ? message : "refused, " + message));
+  scan_button_->setEnabled(true);
+  appendLog(QString("[panel] Scan: %1").arg(success ? message : "refused, " + message));
 }
 
 void AutoMapperPanel::onForceKillTimeout()

@@ -15,7 +15,6 @@
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>sensor_msgs_py</depend>
-  <depend>std_srvs</depend>
   
   <!-- 3D processing -->
   <depend>geometry_msgs</depend>

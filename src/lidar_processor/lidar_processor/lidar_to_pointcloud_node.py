@@ -19,7 +19,6 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
-from std_srvs.srv import Trigger
 import open3d as o3d
 
 
@@ -94,14 +93,6 @@ class PointCloudAggregator:
         with self._lock:
             return len(self.points)
 
-    def clear(self) -> int:
-        """Drop every point; returns how many there were"""
-        with self._lock:
-            count = len(self.points)
-            self.points.clear()
-            self._points_changed = True
-            return count
-
 
 class LidarToPointCloudNode(Node):
     """Enhanced LiDAR to PointCloud processing node"""
@@ -143,13 +134,7 @@ class LidarToPointCloudNode(Node):
             1.0 / self.config.publish_rate,
             self._publish_timer_callback
         )
-
-        # /lidar_to_pointcloud/reset: start the 3D map over (the RViz
-        # AutoMapper panel's "Reset 3D map" button, or `ros2 service call`).
-        self.reset_service = self.create_service(
-            Trigger, '~/reset', self._reset_callback
-        )
-
+        
         # Log configuration
         self._log_configuration()
     
@@ -270,16 +255,6 @@ class LidarToPointCloudNode(Node):
         except Exception as e:
             self.get_logger().error(f"Error publishing point cloud: {e}")
     
-    def _reset_callback(self, request, response):
-        """Clear the aggregated 3D map. The saved .ply keeps the old map
-        until the next save after new points arrive (within save_interval),
-        since writing an empty cloud would fail."""
-        dropped = self.aggregator.clear()
-        self.get_logger().info(f"🧹 3D map reset ({dropped} points dropped)")
-        response.success = True
-        response.message = f"3D map cleared ({dropped} points)."
-        return response
-
     def _save_map_callback(self) -> None:
         """Periodic map saving callback"""
         try:
