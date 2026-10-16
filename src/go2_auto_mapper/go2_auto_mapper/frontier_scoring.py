@@ -52,9 +52,14 @@ def visit_utility(revealed_cells, travel_m, cells_per_meter):
 
 def world_key(x, y, resolution):
     """A map cell's identity that survives SLAM growing the map: the
-    OccupancyGrid origin moves when the map grows, so grid indices change,
-    but world coordinates rounded to the cell size don't."""
-    return (round(x / resolution), round(y / resolution))
+    OccupancyGrid origin moves (by whole cells) when the map grows, so grid
+    indices change, but which world cell a point falls in doesn't.
+
+    floor, not round: a cell center sits at k + 0.5 cells, and round()
+    sends halves to the nearest even number, so neighboring cells would
+    share a key (296 frontier cells became 247 keys).
+    """
+    return (math.floor(x / resolution), math.floor(y / resolution))
 
 
 def remaining_size(target_keys, clusters):

@@ -1416,7 +1416,9 @@ class FrontierExplorer(Node):
         )
 
         if self.send_goal(x, y):
-            self.goal_frontier = (self.frontier_keys(frontier), size)
+            # Sized in keys, the unit verify_frontier_shrank measures in.
+            keys = self.frontier_keys(frontier)
+            self.goal_frontier = (keys, len(keys))
 
     def stop(self):
         # Cancel whatever Nav2 goal is in flight so the robot doesn't

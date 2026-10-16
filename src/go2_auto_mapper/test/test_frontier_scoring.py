@@ -63,10 +63,19 @@ def test_utility_trades_gain_against_distance():
 
 def test_world_key_survives_origin_shift():
     res = 0.05
-    # Same physical cell center before and after the grid origin moved by
-    # whole cells: 1.025 m and 1.025 m map to the same key.
-    assert world_key(1.025, -0.475, res) == world_key(1.025, -0.475, res)
-    assert world_key(1.025, 0.0, res) != world_key(1.125, 0.0, res)
+
+    def center(origin, gx):
+        return origin + (gx + 0.5) * res
+
+    # A grid with origin -5.0 and one that grew by 20 cells (origin -6.0):
+    # the same physical cell has index 30 in one and 50 in the other.
+    assert world_key(center(-5.0, 30), 0.0, res) == world_key(center(-6.0, 50), 0.0, res)
+
+
+def test_world_key_keeps_neighboring_cells_apart():
+    res = 0.05
+    keys = {world_key(-5.0 + (gx + 0.5) * res, 0.0, res) for gx in range(200)}
+    assert len(keys) == 200
 
 
 def test_remaining_size_counts_overlapping_clusters():
