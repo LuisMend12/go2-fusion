@@ -47,10 +47,22 @@ ros2 run go2_auto_mapper explorer
    against a wall.
 4. It picks a goal in this order of priority: not toward a direction it was
    just blocked in; at least `min_goal_distance` away; a straight line to it
-   that is clear in Nav2's local costmap (`/local_costmap/costmap`, which
-   merges the 2D scan and the 3D point cloud); then nearest and largest.
+   that is clear in Nav2's local costmap (`/local_costmap/costmap`); then
+   **what a visit would reveal**. For the candidates left after those
+   filters, it casts `info_gain_rays` rays from the goal across the SLAM map
+   out to `info_gain_range`, counts the unknown cells they reach before a
+   wall, and subtracts `info_gain_cells_per_meter` for every meter of travel
+   (`frontier_scoring.py`). Ranking by distance and frontier size, as
+   before, made the robot nibble the closest edge.
 5. The goal is sent to Nav2's `/navigate_to_pose` action — Nav2 plans the
    path and drives there, same as any manually-set goal.
+   After it arrives (and scans), **a frontier the visit didn't shrink is
+   dropped**. Once the scan at the goal is done (and SLAM has published),
+   it compares the target frontier's size with its size when the goal was
+   chosen. If it didn't shrink, the opening
+   is one the scan can't see into, and the frontier is skipped for the same
+   2 minutes as a failed goal instead of being revisited until the robot
+   declares itself stuck.
 6. It checks the local costmap 4 times a second for an obstacle within
    `obstacle_stop_distance` of the robot's nose, in a strip as wide as its
    body, and **always backs up** (`backup_distance`) when it finds one.
@@ -120,6 +132,9 @@ whatever Nav2 was commanding.
 | `goal_distance` | `0.8` | How far inside known space, toward the robot, to place the goal |
 | `min_goal_distance` | `1.5` | Skip goals closer than this (meters) while any farther frontier is left |
 | `wall_clearance` | `0.5` | Skip goal spots closer than this (meters) to a wall in the SLAM map |
+| `info_gain_range` | `4.0` | How far (meters) the lidar is assumed to see when estimating what a goal would reveal |
+| `info_gain_rays` | `48` | Rays cast per candidate for that estimate |
+| `info_gain_cells_per_meter` | `100.0` | Unknown cells a meter of travel must be worth (400 cells = 1 m² at 5 cm) |
 | `obstacle_stop_distance` | `0.3` | Gap (meters) in front of the nose that counts as blocked |
 | `blocked_timeout` | `0.0` | Seconds an obstacle must stay ahead before a goal is given up (0 = at once) |
 | `backup_distance` | `0.3` | How far (meters) to back up after giving up a blocked goal |
