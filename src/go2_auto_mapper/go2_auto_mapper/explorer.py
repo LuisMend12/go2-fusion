@@ -28,6 +28,13 @@ from go2_auto_mapper.obstacle_sensing import (
     straight_line_clear,
 )
 from go2_auto_mapper.open_space import OCCUPIED_THRESHOLD, find_open_space
+from go2_auto_mapper.frontier_scoring import (
+    count_revealed_unknown,
+    overlaps_dead,
+    remaining_size,
+    visit_utility,
+    world_key,
+)
 
 
 class FrontierExplorer(Node):
@@ -51,6 +58,14 @@ class FrontierExplorer(Node):
         # Goals closer than this to a wall in the SLAM map are skipped:
         # Nav2 can't place the robot's body there, and it scrapes walls.
         self.declare_parameter('wall_clearance', 0.5)
+
+        # Ranking goals by what a visit would reveal (frontier_scoring.py):
+        # unknown cells visible from the goal within info_gain_range, by
+        # casting info_gain_rays rays, minus info_gain_cells_per_meter for
+        # every meter of travel. 400 cells is 1 square meter at 5 cm.
+        self.declare_parameter('info_gain_range', 4.0)
+        self.declare_parameter('info_gain_rays', 48)
+        self.declare_parameter('info_gain_cells_per_meter', 100.0)
 
         # A full turn in place gives SLAM a 360 degree lidar view, so it can
         # place the robot on the map before (and after) each leg of exploring.
@@ -96,6 +111,11 @@ class FrontierExplorer(Node):
 
         self.min_goal_distance = self.get_parameter('min_goal_distance').value
         self.wall_clearance = self.get_parameter('wall_clearance').value
+        self.info_gain_range = self.get_parameter('info_gain_range').value
+        self.info_gain_rays = self.get_parameter('info_gain_rays').value
+        self.info_gain_cells_per_meter = self.get_parameter(
+            'info_gain_cells_per_meter'
+        ).value
 
         self.scan_after_goal = self.get_parameter('scan_after_goal').value
         self.scan_yaw = self.get_parameter('scan_yaw').value
@@ -182,6 +202,16 @@ class FrontierExplorer(Node):
         # of nearby spots just rotate through the list.
         self.failed_goal_cooldown_sec = 120.0
         self.failed_goal_radius = 0.5
+
+        # Frontiers a visit didn't shrink (the scan at the goal couldn't see
+        # into the opening), as (world keys, time.monotonic()); skipped for
+        # failed_goal_cooldown_sec like failed goals. goal_frontier is the
+        # target of the goal in flight; frontier_to_verify is checked once
+        # the scan at the goal is done and SLAM has published the result.
+        self.dead_frontiers = []
+        self.goal_frontier = None
+        self.frontier_to_verify = None
+        self.verify_not_before = None
 
         # If Nav2 accepts a goal but then never reports a result (e.g. the
         # action server drops the connection after accepting), neither
@@ -545,9 +575,21 @@ class FrontierExplorer(Node):
         view = self.local_view()
         blocked = self.recently_blocked() and self.blocked_heading is not None
 
+        # Skip frontiers a recent visit didn't shrink: the scan at the goal
+        # couldn't see into them, so going back would just repeat that.
+        self.prune_dead_frontiers()
+        live = [
+            frontier for frontier in frontiers
+            if not overlaps_dead(
+                self.frontier_keys(frontier),
+                [keys for keys, _ in self.dead_frontiers],
+                DEAD_FRONTIER_OVERLAP,
+            )
+        ]
+
         targets = [
             (frontier, point)
-            for frontier in frontiers
+            for frontier in live
             for point in self.frontier_targets(frontier)
         ]
 
@@ -632,17 +674,10 @@ class FrontierExplorer(Node):
             goal_range = math.hypot(goal_x - robot_x, goal_y - robot_y)
             bearing = math.atan2(goal_y - robot_y, goal_x - robot_x)
 
-            if blocked:
-                # Just turned away from an obstacle: take the longest walk
-                # on offer, to get clear of that spot.
-                score = -goal_range
-            else:
-                # Prefer nearby large frontiers.
-                score = (
-                    distance
-                    -
-                    0.02 * len(frontier)
-                )
+            # Just turned away from an obstacle: take the longest walk on
+            # offer, to get clear of that spot. Otherwise the score is the
+            # information gain, filled in below for the best tier only.
+            score = -goal_range if blocked else None
 
             is_far = goal_range >= self.min_goal_distance
 
@@ -668,7 +703,9 @@ class FrontierExplorer(Node):
                     len(frontier),
                     is_far,
                     line_clear,
-                    toward_blocked
+                    toward_blocked,
+                    goal_range,
+                    frontier
                 )
             )
 
@@ -679,12 +716,93 @@ class FrontierExplorer(Node):
         # enough, then have a clear straight line in Nav2's costmap, then the
         # score. Each only breaks ties of the ones before it, so exploring
         # never stalls when no candidate is ideal.
-        best = min(
-            candidates,
-            key=lambda c: (c[6], not c[4], not c[5], c[0])
+        def tier(c):
+            return (c[6], not c[4], not c[5])
+
+        best_tier = min(tier(c) for c in candidates)
+        pool = [c for c in candidates if tier(c) == best_tier]
+
+        if not blocked:
+            # Prefer the goal that would reveal the most unknown space for
+            # the walk; ranking by distance and frontier size made the robot
+            # nibble the closest edge. Ray-casting is the costly part, so
+            # it's done for this tier only. Lower score is better.
+            pool = [
+                (
+                    -visit_utility(
+                        self.revealed_from(c[1], c[2]),
+                        c[7],
+                        self.info_gain_cells_per_meter,
+                    ),
+                ) + c[1:]
+                for c in pool
+            ]
+
+        best = min(pool, key=lambda c: c[0])
+
+        # (score, x, y, frontier size, frontier cells)
+        return best[:4] + (best[8],)
+
+    def revealed_from(self, x, y):
+        """Unknown cells the lidar would see from world point (x, y)."""
+
+        resolution = self.map.info.resolution
+        gx, gy = self.world_to_grid(x, y)
+        return count_revealed_unknown(
+            self.map.data,
+            self.map.info.width,
+            self.map.info.height,
+            int(math.floor(gx)),
+            int(math.floor(gy)),
+            int(self.info_gain_range / resolution),
+            int(self.info_gain_rays),
         )
 
-        return best[:4]
+    def frontier_keys(self, frontier):
+        """A frontier's cells as world keys, which stay valid when SLAM
+        grows the map and the grid origin moves."""
+
+        resolution = self.map.info.resolution
+        return frozenset(
+            world_key(*self.grid_to_world(gx, gy), resolution)
+            for gx, gy in frontier
+        )
+
+    def prune_dead_frontiers(self):
+
+        now = time.monotonic()
+        self.dead_frontiers = [
+            (keys, t) for keys, t in self.dead_frontiers
+            if now - t < self.failed_goal_cooldown_sec
+        ]
+
+    def verify_frontier_shrank(self, frontiers):
+        """After the scan at a goal, check the target frontier got smaller.
+
+        The goal sits goal_distance back from the unknown edge and the robot
+        spins there; if the frontier is still as big, it's an opening the
+        scan can't see into, and the robot would otherwise keep returning to
+        it until it declared itself stuck. Give up on it for a while.
+        """
+
+        target_keys, size_before = self.frontier_to_verify
+        self.frontier_to_verify = None
+        self.verify_not_before = None
+
+        size_after = remaining_size(
+            target_keys, [self.frontier_keys(f) for f in frontiers]
+        )
+
+        if size_after >= size_before:
+            self.dead_frontiers.append((target_keys, time.monotonic()))
+            self.get_logger().info(
+                f'Frontier unchanged after the visit ({size_after} cells); '
+                f'skipping it for {self.failed_goal_cooldown_sec:.0f} s.'
+            )
+        else:
+            self.get_logger().info(
+                f'Frontier shrank from {size_before} to {size_after} cells.'
+            )
 
     # ==========================================================
     # SEND NAVIGATION GOAL
@@ -719,6 +837,8 @@ class FrontierExplorer(Node):
 
         self.goal_active = True
         self.goal_is_escape = is_escape
+        # Set by the caller for frontier goals once this returns True.
+        self.goal_frontier = None
         self.current_goal = (x, y)
         self.goal_sent_time = time.monotonic()
 
@@ -786,6 +906,8 @@ class FrontierExplorer(Node):
         while, and treat several failures in a row as being stuck."""
 
         self.blacklist_current_goal()
+        # Never reached, so there's no visit to judge the frontier by.
+        self.goal_frontier = None
 
         if self.goal_is_escape:
             # Don't escape from a failed escape (request_escape's cooldown
@@ -824,6 +946,13 @@ class FrontierExplorer(Node):
 
                 if self.scan_after_goal:
                     self.scan_pending = True
+
+                # Check the target frontier shrank, after the scan if there
+                # is one (see verify_frontier_shrank).
+                if self.goal_frontier is not None:
+                    self.frontier_to_verify = self.goal_frontier
+                    self.verify_not_before = None
+                self.goal_frontier = None
 
             elif self.goal_cancelled_for_scan:
 
@@ -870,6 +999,7 @@ class FrontierExplorer(Node):
             self.current_goal_handle.cancel_goal_async()
 
         self.failed_goals = []
+        self.dead_frontiers = []
         self.blocked_time = None
         self.scan_pending = True
 
@@ -1228,6 +1358,17 @@ class FrontierExplorer(Node):
 
         frontiers = self.find_frontiers()
 
+        # A goal was reached: once its scan is done and SLAM has had time to
+        # publish what it saw, check the target frontier actually shrank.
+        if self.frontier_to_verify is not None and not self.scan_pending:
+            now = time.monotonic()
+            if self.verify_not_before is None:
+                self.verify_not_before = now + MAP_SETTLE_SEC
+                return
+            if now < self.verify_not_before:
+                return
+            self.verify_frontier_shrank(frontiers)
+
         if not frontiers:
 
             if not self.exploration_complete_logged:
@@ -1265,7 +1406,7 @@ class FrontierExplorer(Node):
 
         self.no_goal_cycles = 0
 
-        score, x, y, size = selected
+        score, x, y, size, frontier = selected
 
         self.get_logger().info(
             f'Selected frontier: '
@@ -1274,7 +1415,10 @@ class FrontierExplorer(Node):
             f'size={size}'
         )
 
-        self.send_goal(x, y)
+        if self.send_goal(x, y):
+            # Sized in keys, the unit verify_frontier_shrank measures in.
+            keys = self.frontier_keys(frontier)
+            self.goal_frontier = (keys, len(keys))
 
     def stop(self):
         # Cancel whatever Nav2 goal is in flight so the robot doesn't
@@ -1296,6 +1440,14 @@ PR_SET_PDEATHSIG = 1  # from <linux/prctl.h>
 
 # Spacing of the extra goal candidates taken along a long frontier.
 FRONTIER_SAMPLE_SPACING_M = 1.0
+
+# A frontier counts as one given up on (a visit didn't shrink it) when at
+# least this share of its cells belong to it.
+DEAD_FRONTIER_OVERLAP = 0.5
+
+# Wait after the scan at a goal before judging whether the target frontier
+# shrank: SLAM publishes /map every 1 s (map_update_interval).
+MAP_SETTLE_SEC = 1.5
 
 # How often watch_ahead looks at the local costmap while driving.
 WATCH_PERIOD_SEC = 0.25
