@@ -13,6 +13,7 @@ from rclpy.action import ActionClient
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from nav_msgs.msg import OccupancyGrid
+from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped
 
 from builtin_interfaces.msg import Duration
@@ -205,6 +206,13 @@ class FrontierExplorer(Node):
         self.watch_timer = self.create_timer(
             WATCH_PERIOD_SEC,
             self.watch_ahead
+        )
+
+        # /frontier_explorer/scan: a 360 degree scan on request (the RViz
+        # AutoMapper panel's Scan button, or `ros2 service call`).
+        self.goal_cancelled_for_scan = False
+        self.scan_service = self.create_service(
+            Trigger, '~/scan', self.handle_scan_request
         )
 
         self.get_logger().info(
@@ -767,6 +775,11 @@ class FrontierExplorer(Node):
                 if self.scan_after_goal:
                     self.scan_pending = True
 
+            elif self.goal_cancelled_for_scan:
+
+                # Interrupted for a requested scan: not the goal's fault.
+                self.get_logger().info('Goal paused for the requested scan.')
+
             else:
 
                 self.get_logger().warn(
@@ -786,6 +799,38 @@ class FrontierExplorer(Node):
         self.current_goal_handle = None
         self.goal_active = False
         self.goal_sent_time = None
+        self.goal_cancelled_for_scan = False
+
+    # ==========================================================
+    # SCAN ON REQUEST
+    # ==========================================================
+
+    def handle_scan_request(self, request, response):
+        """Turn 360 degrees as soon as possible: the current goal is paused
+        (not counted as failed), and failed spots are forgiven, since the
+        scan gives SLAM fresh data and they may be reachable now."""
+
+        if self.maneuver_active and self.maneuver_name == 'Scan':
+            response.success = False
+            response.message = 'Already scanning.'
+            return response
+
+        if self.goal_active and self.current_goal_handle is not None:
+            self.goal_cancelled_for_scan = True
+            self.current_goal_handle.cancel_goal_async()
+
+        self.failed_goals = []
+        self.blocked_time = None
+        self.scan_pending = True
+
+        self.get_logger().info('Scan requested.')
+        response.success = True
+        response.message = (
+            'Scan queued: it starts once the current move stops.'
+            if self.goal_active or self.maneuver_active
+            else 'Scan starting.'
+        )
+        return response
 
     # ==========================================================
     # MANEUVERS: 360 DEGREE SCAN, BACKING AWAY

@@ -3,6 +3,7 @@
 #include <csignal>
 #include <unistd.h>
 
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -18,22 +19,43 @@ namespace
 // explorer.py's own shutdown handling expects, so it cancels any in-flight
 // Nav2 goal) before giving up and force-killing the process.
 constexpr int kGracefulStopTimeoutMs = 5000;
+
+// Re-enable the Scan button if the explorer never answers the request.
+constexpr int kScanReplyTimeoutMs = 5000;
+
+constexpr char kScanService[] = "/frontier_explorer/scan";
 }  // namespace
 
 AutoMapperPanel::AutoMapperPanel(QWidget * parent)
 : rviz_common::Panel(parent)
 {
   start_stop_button_ = new QPushButton("Start", this);
+  scan_button_ = new QPushButton("Scan", this);
+  scan_button_->setToolTip(
+    "Turn the robot 360 degrees so SLAM can re-place it on the map. "
+    "Pauses the current goal; needs the explorer running.");
   status_label_ = new QLabel("Stopped", this);
   log_view_ = new QPlainTextEdit(this);
   log_view_->setReadOnly(true);
   log_view_->setMaximumBlockCount(1000);
 
+  auto * buttons = new QHBoxLayout();
+  buttons->addWidget(start_stop_button_);
+  buttons->addWidget(scan_button_);
+
   auto * layout = new QVBoxLayout(this);
   layout->addWidget(status_label_);
-  layout->addWidget(start_stop_button_);
+  layout->addLayout(buttons);
   layout->addWidget(log_view_, /*stretch=*/1);
   setLayout(layout);
+
+  node_ = rclcpp::Node::make_shared("go2_rviz_auto_mapper_panel");
+  scan_client_ = node_->create_client<std_srvs::srv::Trigger>(kScanService);
+  executor_.add_node(node_);
+  spin_thread_ = std::thread([this]() {executor_.spin();});
+
+  connect(scan_button_, &QPushButton::clicked, this, &AutoMapperPanel::onScanClicked);
+  connect(this, &AutoMapperPanel::scanReplied, this, &AutoMapperPanel::onScanReplied);
 
   process_ = new QProcess(this);
   process_->setProcessChannelMode(QProcess::SeparateChannels);
@@ -50,6 +72,13 @@ AutoMapperPanel::AutoMapperPanel(QWidget * parent)
 
 AutoMapperPanel::~AutoMapperPanel()
 {
+  // Stop the spin thread first: a late service reply must not call back into
+  // a panel that's being destroyed.
+  executor_.cancel();
+  if (spin_thread_.joinable()) {
+    spin_thread_.join();
+  }
+
   if (process_->state() != QProcess::NotRunning) {
     ::kill(static_cast<pid_t>(process_->processId()), SIGINT);
     process_->waitForFinished(kGracefulStopTimeoutMs);
@@ -93,6 +122,31 @@ void AutoMapperPanel::onStartStopClicked()
     ::kill(static_cast<pid_t>(process_->processId()), SIGINT);
     QTimer::singleShot(kGracefulStopTimeoutMs, this, &AutoMapperPanel::onForceKillTimeout);
   }
+}
+
+void AutoMapperPanel::onScanClicked()
+{
+  if (!scan_client_->service_is_ready()) {
+    appendLog("[panel] Scan: the explorer isn't running. Press Start first.");
+    return;
+  }
+
+  scan_button_->setEnabled(false);
+  QTimer::singleShot(kScanReplyTimeoutMs, this, [this]() {scan_button_->setEnabled(true);});
+
+  auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+  scan_client_->async_send_request(
+    request,
+    [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+      const auto response = future.get();
+      emit scanReplied(response->success, QString::fromStdString(response->message));
+    });
+}
+
+void AutoMapperPanel::onScanReplied(bool success, const QString & message)
+{
+  scan_button_->setEnabled(true);
+  appendLog(QString("[panel] Scan: %1").arg(success ? message : "refused, " + message));
 }
 
 void AutoMapperPanel::onForceKillTimeout()
