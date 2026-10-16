@@ -22,8 +22,10 @@ namespace go2_rviz_plugins
 // background thread like MapViewerPanel's:
 //   - Scan: the explorer's /frontier_explorer/scan (a 360 degree turn so
 //     SLAM can re-place the robot).
-//   - Reset 3D map: lidar_processor's /lidar_to_pointcloud/reset (clears the
-//     aggregated cloud behind /pointcloud/aggregated and 3d_map.ply).
+//   - Reset maps: lidar_processor's /lidar_to_pointcloud/reset (clears the
+//     aggregated cloud behind /pointcloud/aggregated and 3d_map.ply). The
+//     same button also restarts slam_toolbox for a fresh 2D map (see
+//     onResetMapClicked: Humble's slam_toolbox has no reset service).
 // See go2_auto_mapper/README.md for what the explorer does and how to stop
 // it safely by hand if this panel isn't used.
 class AutoMapperPanel : public rviz_common::Panel

@@ -5,6 +5,7 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTimer>
@@ -27,7 +28,13 @@ constexpr char kScanService[] = "/frontier_explorer/scan";
 constexpr char kResetMapService[] = "/lidar_to_pointcloud/reset";
 
 constexpr char kScanLabel[] = "Scan";
-constexpr char kResetMapLabel[] = "Reset 3D map";
+constexpr char kResetMapLabel[] = "Reset maps";
+
+// Humble's slam_toolbox has no reset service. robot.launch.py starts it with
+// respawn=True, so stopping it (SIGINT, a clean shutdown) makes launch start
+// a fresh one with an empty map. RViz runs in the same container as the
+// stack, so pkill reaches it.
+constexpr char kSlamProcessPattern[] = "async_slam_toolbox_node";
 }  // namespace
 
 AutoMapperPanel::AutoMapperPanel(QWidget * parent)
@@ -40,8 +47,9 @@ AutoMapperPanel::AutoMapperPanel(QWidget * parent)
     "Pauses the current goal; needs the explorer running.");
   reset_map_button_ = new QPushButton(kResetMapLabel, this);
   reset_map_button_->setToolTip(
-    "Clear the accumulated 3D point cloud (/pointcloud/aggregated, "
-    "3d_map.ply) and start it over. Doesn't touch the 2D SLAM map.");
+    "Start both maps over from where the robot stands: restarts SLAM (the 2D "
+    "/map the auto mapper explores) and clears the accumulated 3D point "
+    "cloud (/pointcloud/aggregated, 3d_map.ply). Asks to confirm first.");
   status_label_ = new QLabel("Stopped", this);
   log_view_ = new QPlainTextEdit(this);
   log_view_->setReadOnly(true);
@@ -144,9 +152,29 @@ void AutoMapperPanel::onScanClicked()
 
 void AutoMapperPanel::onResetMapClicked()
 {
+  const auto answer = QMessageBox::question(
+    this, "Reset maps",
+    "Throw away the 2D SLAM map and the 3D point cloud, and start both over "
+    "from where the robot is now?\n\n"
+    "Navigation pauses for a few seconds while SLAM restarts.");
+  if (answer != QMessageBox::Yes) {
+    return;
+  }
+
+  // 2D: stop slam_toolbox; launch respawns it with an empty map.
+  const int pkill_code = QProcess::execute("pkill", {"-INT", "-f", kSlamProcessPattern});
+  if (pkill_code == 0) {
+    appendLog("[panel] Reset maps: SLAM restarting with a fresh 2D map.");
+  } else {
+    appendLog(
+      QString("[panel] Reset maps: couldn't stop SLAM (pkill exit code %1); "
+      "is the robot stack running in this container?").arg(pkill_code));
+  }
+
+  // 3D: clear lidar_processor's accumulated cloud.
   callTrigger(
     reset_map_client_, reset_map_button_, kResetMapLabel,
-    "lidar_to_pointcloud isn't running (it starts with robot.launch.py).");
+    "lidar_to_pointcloud isn't running, so the 3D cloud wasn't cleared.");
 }
 
 void AutoMapperPanel::callTrigger(
