@@ -1081,6 +1081,9 @@ class FrontierExplorer(Node):
         self.recovery_fault = reason
         self.fault_refresh = refresh
         self.fault_checked_stamp = self._ros_stamp('scan')
+        # A latched stop always ends a recovery translation: tick_recovery
+        # publishes on the same mux input and would overwrite the zero.
+        self.recovery_move = None
         self._hold_stop()
         self.get_logger().error(
             f'Recovery stopped: {reason} '
@@ -1511,6 +1514,8 @@ class FrontierExplorer(Node):
         reason = 'Nav2 accepted an abandoned turn/back-up late'
         if self.recovery_fault:
             # Keep the existing stop's reason and requirements.
+            self.recovery_move = None
+            self._hold_stop()
             self.get_logger().warn(f'{reason}; cancelling it.')
         else:
             self._stop_for(reason)
@@ -1575,11 +1580,14 @@ class FrontierExplorer(Node):
         """
 
         try:
+            # A latched stop, or a Nav2 action not yet confirmed ended, takes
+            # precedence over a recovery translation.
+            if self.recovery_fault or self.orphans or self.maneuver_stopping:
+                self.recovery_move = None
+                self._consider_clearing_fault()
+                return
             if self.recovery_move is not None:
                 self.tick_recovery()
-                return
-            if self.recovery_fault:
-                self._consider_clearing_fault()
                 return
             if self.refresh_after is not None:
                 # Keep publishing zero: twist_mux would otherwise fall through
