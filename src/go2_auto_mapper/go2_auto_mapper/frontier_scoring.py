@@ -6,6 +6,9 @@ hand-made grid, like open_space.py and obstacle_sensing.py.
 """
 
 import math
+from collections import deque
+
+import numpy as np
 
 # OccupancyGrid values: 0 free, 100 occupied, -1 unknown. At or above this
 # counts as a wall (map_server's default occupied threshold of 0.65).
@@ -90,3 +93,56 @@ def overlaps_dead(cluster_keys, dead_clusters, min_fraction):
         if shared >= min_fraction * len(cluster_keys):
             return True
     return False
+
+
+def find_frontier_clusters(data, width, height, min_size):
+    """Groups of frontier cells: free cells (0) with an unknown (-1) cell
+    directly above, below, left or right, grouped 4-connected. Groups with
+    fewer than `min_size` cells are dropped as noise.
+
+    Finding the frontier cells is one numpy pass; only those cells are then
+    grouped in Python. Checking every map cell in Python took ~0.7 s on a
+    40 x 40 m map, on the thread that also runs the obstacle watch.
+
+    The result matches a plain per-cell scan exactly, groups and cell order
+    included: groups start in row-major order and grow breadth-first with
+    neighbors in the order +x, -x, +y, -y. Callers sample cells by position
+    in each group, so the order matters.
+    """
+
+    try:  # OccupancyGrid.data is an array('b'): view it without copying
+        grid = np.frombuffer(data, dtype=np.int8)
+    except TypeError:
+        grid = np.asarray(data, dtype=np.int8)
+    grid = grid[:width * height].reshape(height, width)
+
+    unknown = grid == -1
+    near_unknown = np.zeros_like(unknown)
+    near_unknown[:, :-1] |= unknown[:, 1:]   # unknown at x + 1
+    near_unknown[:, 1:] |= unknown[:, :-1]   # unknown at x - 1
+    near_unknown[:-1, :] |= unknown[1:, :]   # unknown at y + 1
+    near_unknown[1:, :] |= unknown[:-1, :]   # unknown at y - 1
+    ys, xs = np.nonzero((grid == 0) & near_unknown)   # row-major order
+
+    cells = list(zip(xs.tolist(), ys.tolist()))
+    frontier_cells = set(cells)
+    visited = set()
+    clusters = []
+
+    for start in cells:
+        if start in visited:
+            continue
+        visited.add(start)
+        queue = deque([start])
+        cluster = []
+        while queue:
+            cx, cy = queue.popleft()
+            cluster.append((cx, cy))
+            for neighbor in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                if neighbor in frontier_cells and neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        if len(cluster) >= min_size:
+            clusters.append(cluster)
+
+    return clusters

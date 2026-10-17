@@ -4,7 +4,6 @@ import ctypes
 import math
 import signal
 import time
-from collections import deque
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -25,6 +24,7 @@ from go2_auto_mapper.recovery import (
     assess_recovery,
     latch_decision,
     refresh_status,
+    scan_age,
     scan_covers_move,
     swept_clear,
 )
@@ -43,6 +43,7 @@ from go2_auto_mapper.obstacle_sensing import (
 from go2_auto_mapper.open_space import OCCUPIED_THRESHOLD, find_open_space
 from go2_auto_mapper.frontier_scoring import (
     count_revealed_unknown,
+    find_frontier_clusters,
     overlaps_dead,
     remaining_size,
     visit_utility,
@@ -160,6 +161,10 @@ class FrontierExplorer(Node):
         self.refresh_after = None
         self.recovery_move = None
         self.recovery_fault = None
+        # (stop ROS time, need a new /map) when the latch was caused by
+        # sensing that stopped updating. A clear way ahead isn't enough to
+        # release it: that sensing must be fresh again first.
+        self.fault_refresh = None
         # Scan stamp already judged for the current latch. A newer scan can
         # clear it; the one that caused the stop cannot.
         self.fault_checked_stamp = None
@@ -265,6 +270,12 @@ class FrontierExplorer(Node):
         self.maneuver_handle = None
         self.maneuver_sent_time = None
         self.maneuver_time_allowance = 0.0
+        # Each turn/back-up gets a number, so a Nav2 reply that arrives after
+        # it was abandoned can't change the state of a newer one.
+        self.maneuver_generation = 0
+        # A timed-out maneuver was cancelled but Nav2 hasn't confirmed it
+        # ended yet; until then it may still be moving the robot.
+        self.maneuver_stopping = False
 
         # Set when a goal is abandoned for an obstacle ahead: the heading
         # (map frame) that was blocked and when, so the next goals avoid that
@@ -424,93 +435,16 @@ class FrontierExplorer(Node):
     # FRONTIER DETECTION
     # ==========================================================
 
-    def is_frontier(self, x, y):
-
-        if not self.valid_cell(x, y):
-            return False
-
-        # Frontier cells themselves should be FREE.
-        if self.cell_value(x, y) != 0:
-            return False
-
-        neighbors = [
-            (x + 1, y),
-            (x - 1, y),
-            (x, y + 1),
-            (x, y - 1)
-        ]
-
-        for nx, ny in neighbors:
-
-            if not self.valid_cell(nx, ny):
-                continue
-
-            # Unknown neighboring cell
-            if self.cell_value(nx, ny) == -1:
-                return True
-
-        return False
-
-    # ==========================================================
-    # FIND FRONTIER GROUPS
-    # ==========================================================
-
     def find_frontiers(self):
+        """Groups of free cells bordering unknown space (see
+        frontier_scoring.find_frontier_clusters)."""
 
-        frontiers = []
-
-        visited = set()
-
-        width = self.map.info.width
-        height = self.map.info.height
-
-        for y in range(height):
-
-            for x in range(width):
-
-                if (x, y) in visited:
-                    continue
-
-                if not self.is_frontier(x, y):
-                    continue
-
-                # BFS frontier clustering
-                queue = deque([(x, y)])
-                visited.add((x, y))
-
-                cluster = []
-
-                while queue:
-
-                    cx, cy = queue.popleft()
-
-                    cluster.append((cx, cy))
-
-                    neighbors = [
-                        (cx + 1, cy),
-                        (cx - 1, cy),
-                        (cx, cy + 1),
-                        (cx, cy - 1)
-                    ]
-
-                    for nx, ny in neighbors:
-
-                        if not self.valid_cell(nx, ny):
-                            continue
-
-                        if (nx, ny) in visited:
-                            continue
-
-                        if self.is_frontier(nx, ny):
-
-                            visited.add((nx, ny))
-                            queue.append((nx, ny))
-
-                if len(cluster) >= self.min_frontier_size:
-
-                    frontiers.append(cluster)
-
-        return frontiers
+        return find_frontier_clusters(
+            self.map.data,
+            self.map.info.width,
+            self.map.info.height,
+            self.min_frontier_size,
+        )
 
     # ==========================================================
     # FRONTIER CENTER
@@ -1047,11 +981,29 @@ class FrontierExplorer(Node):
             response.message = 'Already scanning.'
             return response
 
+        # Scan clears a latched stop, but not one whose cause may still be
+        # live: a cancelled maneuver Nav2 hasn't confirmed ended, or sensing
+        # that hasn't updated since it went quiet.
+        if self.maneuver_stopping:
+            response.success = False
+            response.message = (
+                f'Waiting for Nav2 to confirm the cancelled '
+                f'{self.maneuver_name} has ended.'
+            )
+            return response
+        if self.fault_refresh is not None:
+            ready, why = self._refresh_check(*self.fault_refresh)
+            if not ready:
+                response.success = False
+                response.message = f'Not safe to move yet: {why}.'
+                return response
+
         if self.goal_active and self.current_goal_handle is not None:
             self.goal_cancelled_for_scan = True
             self.current_goal_handle.cancel_goal_async()
 
         self.recovery_fault = None
+        self.fault_refresh = None
         self.fault_checked_stamp = None
         self.refresh_after = None
         self.failed_goals = []
@@ -1105,8 +1057,13 @@ class FrontierExplorer(Node):
 
         self.recovery_pub.publish(Twist())
 
-    def _stop_for(self, reason):
+    def _stop_for(self, reason, refresh=None):
+        """Latch a stop. `refresh` is (stop ROS time, need a new /map) when
+        the cause was sensing that stopped updating; the latch then also
+        waits for that sensing, not just for a clear way ahead."""
+
         self.recovery_fault = reason
+        self.fault_refresh = refresh
         self.fault_checked_stamp = self._ros_stamp('scan')
         self._hold_stop()
         self.get_logger().error(
@@ -1123,6 +1080,24 @@ class FrontierExplorer(Node):
         """
 
         self._hold_stop()
+
+        # A cancelled turn/back-up may still be moving the robot until Nav2
+        # confirms it ended (see maneuver_stopping).
+        if self.maneuver_active:
+            return
+
+        # Stopped because sensing went quiet: a clear strip ahead proves
+        # nothing about the cloud or map that stopped updating.
+        if self.fault_refresh is not None:
+            ready, why = self._refresh_check(*self.fault_refresh)
+            if not ready:
+                self.get_logger().info(
+                    f'Still stopped: {why}.', throttle_duration_sec=10.0
+                )
+                return
+            self.get_logger().info('Sensing is updating again.')
+            self.fault_refresh = None
+
         scan = self.latest_scan
         age = self._scan_age()
         stamp = self._ros_stamp('scan')
@@ -1170,9 +1145,18 @@ class FrontierExplorer(Node):
         )
 
     def _scan_age(self):
+        """Age of the latest scan by both its stamp and its arrival, or None
+        (see recovery.scan_age)."""
+
         if 'scan' not in self.observed:
             return None
-        return time.monotonic() - self.observed['scan'][0]
+        received, stamp = self.observed['scan']
+        return scan_age(
+            received,
+            time.monotonic(),
+            stamp,
+            self.get_clock().now().nanoseconds * 1e-9,
+        )
 
     def _note_tf_stamps(self):
         """Record the latest odom and map transforms. A stamp from before the
@@ -1190,6 +1174,26 @@ class FrontierExplorer(Node):
                 continue
             stamp = stamped.header.stamp
             self.tf_stamps[name] = stamp.sec + stamp.nanosec * 1e-9
+
+    def _refresh_check(self, stop_ros, need_map):
+        """(ready, reason): has every source updated since `stop_ros`?
+        See recovery.refresh_status for which sources and why."""
+
+        self._note_tf_stamps()
+        return refresh_status(
+            self.get_clock().now().nanoseconds * 1e-9,
+            stop_ros,
+            REFRESH_TIMEOUT_SEC,
+            {
+                'scan': self._ros_stamp('scan'),
+                'cloud': self._ros_stamp('cloud'),
+                'costmap': self._ros_stamp('costmap'),
+                'odom_tf': self.tf_stamps.get('odom_tf'),
+                'map_tf': self.tf_stamps.get('map_tf'),
+                'slam_map': self._ros_stamp('map'),
+            },
+            need_map,
+        )
 
     def _ros_stamp(self, name):
         if name not in self.observed:
@@ -1313,22 +1317,38 @@ class FrontierExplorer(Node):
             )
             return False
 
+        self.maneuver_generation += 1
+        generation = self.maneuver_generation
         self.maneuver_name = name
         self.maneuver_active = True
+        self.maneuver_stopping = False
         self.maneuver_sent_time = time.monotonic()
         self.maneuver_time_allowance = time_allowance
 
         future = client.send_goal_async(goal)
-        future.add_done_callback(self.maneuver_response_callback)
+        future.add_done_callback(
+            lambda f, g=generation: self.maneuver_response_callback(f, g)
+        )
         return True
 
-    def maneuver_response_callback(self, future):
+    def maneuver_response_callback(self, future, generation):
 
         try:
             goal_handle = future.result()
         except Exception as e:
-            self._stop_for(f'{self.maneuver_name} failed to start: {e}')
-            self.finish_maneuver()
+            if generation == self.maneuver_generation:
+                self._stop_for(f'{self.maneuver_name} failed to start: {e}')
+                self.finish_maneuver()
+            return
+
+        if generation != self.maneuver_generation:
+            # Accepted after it was abandoned: it must not run alongside
+            # whatever came next.
+            if goal_handle.accepted:
+                self.get_logger().warn(
+                    'Nav2 accepted an abandoned turn/back-up late; cancelling it.'
+                )
+                goal_handle.cancel_goal_async()
             return
 
         if not goal_handle.accepted:
@@ -1337,11 +1357,27 @@ class FrontierExplorer(Node):
             return
 
         self.maneuver_handle = goal_handle
+        if self.maneuver_stopping:
+            # Timed out before Nav2 accepted it: cancel now, and wait below
+            # for the result that confirms it ended.
+            goal_handle.cancel_goal_async()
         goal_handle.get_result_async().add_done_callback(
-            self.maneuver_result_callback
+            lambda f, g=generation: self.maneuver_result_callback(f, g)
         )
 
-    def maneuver_result_callback(self, future):
+    def maneuver_result_callback(self, future, generation):
+
+        if generation != self.maneuver_generation:
+            return  # an older maneuver; the current one isn't affected
+
+        if self.maneuver_stopping:
+            # The abandoned maneuver has now really ended in Nav2. The stop it
+            # caused stays latched (see _consider_clearing_fault).
+            self.get_logger().info(
+                f'Abandoned {self.maneuver_name} has ended in Nav2.'
+            )
+            self.finish_maneuver()
+            return
 
         try:
             status = future.result().status
@@ -1371,6 +1407,7 @@ class FrontierExplorer(Node):
 
         self.maneuver_handle = None
         self.maneuver_active = False
+        self.maneuver_stopping = False
         self.maneuver_sent_time = None
 
     # ==========================================================
@@ -1557,21 +1594,7 @@ class FrontierExplorer(Node):
             return
         if self.refresh_after is not None:
             stop_ros, started, need_map = self.refresh_after
-            self._note_tf_stamps()
-            ready, reason = refresh_status(
-                self.get_clock().now().nanoseconds * 1e-9,
-                stop_ros,
-                REFRESH_TIMEOUT_SEC,
-                {
-                    'scan': self._ros_stamp('scan'),
-                    'cloud': self._ros_stamp('cloud'),
-                    'costmap': self._ros_stamp('costmap'),
-                    'odom_tf': self.tf_stamps.get('odom_tf'),
-                    'map_tf': self.tf_stamps.get('map_tf'),
-                    'slam_map': self._ros_stamp('map'),
-                },
-                need_map,
-            )
+            ready, reason = self._refresh_check(stop_ros, need_map)
             if ready:
                 self.refresh_after = None
                 self.get_logger().info(
@@ -1582,13 +1605,21 @@ class FrontierExplorer(Node):
             else:
                 if time.monotonic() - started > REFRESH_TIMEOUT_SEC:
                     self.refresh_after = None
-                    self._stop_for(reason)
+                    # Keep the same requirements on the latch: it may only
+                    # release once this sensing is fresh after stop_ros.
+                    self._stop_for(reason, refresh=(stop_ros, need_map))
                 return
 
         # Maneuvers only need odometry, not the map, so the startup scan runs
         # before SLAM has a map: turning in place is what gives it one.
         if self.maneuver_active:
-            if (
+            if self.maneuver_stopping:
+                self.get_logger().info(
+                    f'Waiting for Nav2 to confirm the cancelled '
+                    f'{self.maneuver_name} has ended.',
+                    throttle_duration_sec=10.0,
+                )
+            elif (
                 self.maneuver_sent_time is not None
                 and time.monotonic() - self.maneuver_sent_time
                 > self.maneuver_time_allowance + 10.0
@@ -1596,12 +1627,14 @@ class FrontierExplorer(Node):
                 self.get_logger().warn(
                     f'No {self.maneuver_name} result; stopping exploration.'
                 )
-                # Cancel it in Nav2 too, so it can't keep turning or backing
-                # up underneath the next goal.
+                # Cancel it in Nav2, and stay "active" until Nav2 confirms it
+                # ended: freeing the state now would let the next move start
+                # while this one may still be turning or backing up. (If it
+                # hasn't been accepted yet, the response callback cancels it.)
+                self.maneuver_stopping = True
                 if self.maneuver_handle is not None:
                     self.maneuver_handle.cancel_goal_async()
                 self._stop_for(f'no {self.maneuver_name} result')
-                self.finish_maneuver()
             return
 
         if not self.goal_active:

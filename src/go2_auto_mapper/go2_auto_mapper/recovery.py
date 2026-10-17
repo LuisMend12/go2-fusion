@@ -22,6 +22,9 @@ RECOVERY_SPEED_MPS = 0.10
 RECOVERY_TIME_LIMIT_SEC = 8.0
 # /scan arrives at about 4 Hz. Older than this, the corridor is stale.
 SCAN_MAX_AGE_SEC = 0.75
+# A scan stamped further in the future than this points at a clock problem,
+# so it says nothing about the present.
+FUTURE_STAMP_TOLERANCE_SEC = 0.1
 # Long enough for a costmap update (2 Hz) and, when required, a SLAM map (1 s).
 REFRESH_TIMEOUT_SEC = 12.0
 # mapper_params_online_async.yaml minimum_travel_distance. A shorter move
@@ -130,10 +133,26 @@ def choose_recovery(grid, x, y, yaw, distance, scan):
     ))
 
 
+def scan_age(received_mono, now_mono, stamp_sec, ros_now_sec):
+    """Age of a scan for safety decisions, in seconds, or None if unusable.
+
+    The larger of the time since it was taken (header stamp against ROS
+    time) and the time since it arrived (monotonic). Arrival alone isn't
+    enough: a scan taken 2 s ago and delivered late by a transport or
+    executor backlog would look brand new. A stamp in the future (beyond
+    FUTURE_STAMP_TOLERANCE_SEC) proves nothing about the present.
+    """
+
+    acquired = ros_now_sec - stamp_sec
+    if acquired < -FUTURE_STAMP_TOLERANCE_SEC:
+        return None
+    return max(now_mono - received_mono, acquired)
+
+
 def assess_recovery(grid, x, y, yaw, distance, scan, scan_age, max_age):
     """(move, reason). `move` is None when the robot should stay stopped.
 
-    `scan_age` is how long ago the scan was received, in seconds. Older than
+    `scan_age` is the scan's age in seconds (see scan_age()). Older than
     `max_age`, or missing, is stale and therefore unsafe.
     """
 
