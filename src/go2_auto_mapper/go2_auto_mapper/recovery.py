@@ -25,6 +25,10 @@ SCAN_MAX_AGE_SEC = 0.75
 # A scan stamped further in the future than this points at a clock problem,
 # so it says nothing about the present.
 FUTURE_STAMP_TOLERANCE_SEC = 0.1
+# Sensing required to release a stop must also be current, not merely newer
+# than the stop: a source that sent one message and died is not updating.
+# Slowest required source is the SLAM map (1 s), hence the margin.
+SENSING_MAX_AGE_SEC = 3.0
 # Long enough for a costmap update (2 Hz) and, when required, a SLAM map (1 s).
 REFRESH_TIMEOUT_SEC = 12.0
 # mapper_params_online_async.yaml minimum_travel_distance. A shorter move
@@ -213,3 +217,24 @@ def refresh_status(now, stop_time, timeout, stamps, need_map):
     if now - stop_time > timeout:
         return False, f'timed out waiting for fresh {detail}'
     return False, f'waiting for fresh {detail}'
+
+
+def stale_sources(now_ros, now_mono, sources, max_age):
+    """Names of sources that aren't current.
+
+    `sources` maps a name to (arrival in monotonic seconds or None, stamp in
+    ROS seconds or None). A source is stale when it has no stamp, its stamp
+    is more than `max_age` old, or (where the arrival time is known) it
+    arrived more than `max_age` ago. Future stamps are not stale here:
+    slam_toolbox stamps map->odom ahead on purpose (transform_timeout).
+    """
+
+    stale = []
+    for name, (arrived, stamp) in sources.items():
+        if (
+            stamp is None
+            or now_ros - stamp > max_age
+            or (arrived is not None and now_mono - arrived > max_age)
+        ):
+            stale.append(name)
+    return stale

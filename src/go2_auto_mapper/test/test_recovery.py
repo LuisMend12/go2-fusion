@@ -9,6 +9,7 @@ from go2_auto_mapper.recovery import (
     latch_decision,
     refresh_status,
     scan_age,
+    stale_sources,
     scan_covers_move,
     swept_clear,
 )
@@ -169,3 +170,18 @@ def test_scan_age_rejects_future_stamps():
     assert scan_age(100.0, 100.0, stamp_sec=55.0, ros_now_sec=53.0) is None
     # Within the tolerance, a tiny clock skew is fine.
     assert scan_age(100.0, 100.0, stamp_sec=53.05, ros_now_sec=53.0) == 0.0
+
+
+def test_stale_sources_requires_current_data():
+    now_ros, now_mono = 100.0, 500.0
+    sources = {
+        'scan': (499.9, 99.9),     # current
+        'cloud': (494.0, 99.95),   # stamped now but arrived 6 s ago: stale
+        'costmap': (499.0, 95.0),  # arrived now but taken 5 s ago: stale
+        'odom_tf': (None, 99.8),   # TF: arrival unknown, stamp current
+        'map_tf': (None, 100.5),   # future-stamped map->odom is normal
+        'slam_map': (None, None),  # never received
+    }
+    assert sorted(stale_sources(now_ros, now_mono, sources, 3.0)) == [
+        'cloud', 'costmap', 'slam_map'
+    ]
