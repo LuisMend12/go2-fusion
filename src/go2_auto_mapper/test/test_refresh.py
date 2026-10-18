@@ -34,9 +34,20 @@ def test_recent_delivery_of_old_data_is_stale():
 
 def test_refresh_timeout_latches_stop():
     node = explorer_stub()
-    node.refresh_after = (98.0, time.monotonic()-21)
+    # (stop ROS time, monotonic start, need a new SLAM map), timed out.
+    node.refresh_after = (98.0, time.monotonic() - 21, False)
+    node.tf_stamps = {}
     messages = []
-    node.get_logger = lambda: SimpleNamespace(error=messages.append)
+    node.get_logger = lambda: SimpleNamespace(
+        error=messages.append, info=messages.append)
+    node._note_tf_stamps = lambda: None
+    node._hold_stop = lambda: None
+    for name in ('_refresh_check', '_ros_stamp', '_stop_for'):
+        method = getattr(FrontierExplorer, name)
+        setattr(node, name, lambda *a, m=method, **k: m(node, *a, **k))
     FrontierExplorer._exploration_loop_impl(node)
     assert node.recovery_fault
     assert messages
+    # The latch keeps the sensing requirement, so a clear way ahead alone
+    # can't release it.
+    assert node.fault_refresh == (98.0, False)

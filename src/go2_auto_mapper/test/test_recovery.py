@@ -8,6 +8,8 @@ from go2_auto_mapper.recovery import (
     choose_recovery,
     latch_decision,
     refresh_status,
+    scan_age,
+    stale_sources,
     scan_covers_move,
     swept_clear,
 )
@@ -147,3 +149,39 @@ def test_short_move_does_not_wait_for_slam_map():
     ready, reason = refresh_status(7.0, 5.0, 12.0, stamps, False)
     assert ready
     assert reason == ''
+
+
+def test_scan_age_uses_acquisition_time_not_just_arrival():
+    # Taken 2 s ago, delivered just now: arrival alone would say 0 s.
+    age = scan_age(received_mono=100.0, now_mono=100.0,
+                   stamp_sec=50.0, ros_now_sec=52.0)
+    assert age == 2.0
+    assert age > SCAN_MAX_AGE_SEC
+
+
+def test_scan_age_uses_arrival_when_that_is_older():
+    # Stamped 0.1 s ago but this callback ran 1 s after it arrived.
+    age = scan_age(received_mono=100.0, now_mono=101.0,
+                   stamp_sec=52.9, ros_now_sec=53.0)
+    assert abs(age - 1.0) < 1e-9
+
+
+def test_scan_age_rejects_future_stamps():
+    assert scan_age(100.0, 100.0, stamp_sec=55.0, ros_now_sec=53.0) is None
+    # Within the tolerance, a tiny clock skew is fine.
+    assert scan_age(100.0, 100.0, stamp_sec=53.05, ros_now_sec=53.0) == 0.0
+
+
+def test_stale_sources_requires_current_data():
+    now_ros, now_mono = 100.0, 500.0
+    sources = {
+        'scan': (499.9, 99.9),     # current
+        'cloud': (494.0, 99.95),   # stamped now but arrived 6 s ago: stale
+        'costmap': (499.0, 95.0),  # arrived now but taken 5 s ago: stale
+        'odom_tf': (None, 99.8),   # TF: arrival unknown, stamp current
+        'map_tf': (None, 100.5),   # future-stamped map->odom is normal
+        'slam_map': (None, None),  # never received
+    }
+    assert sorted(stale_sources(now_ros, now_mono, sources, 3.0)) == [
+        'cloud', 'costmap', 'slam_map'
+    ]

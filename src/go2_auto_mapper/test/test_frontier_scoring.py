@@ -100,3 +100,54 @@ def test_overlaps_dead():
     assert overlaps_dead({(0, 0), (1, 0), (2, 0)}, dead, 0.5)
     assert not overlaps_dead({(2, 0), (8, 0), (9, 0), (10, 0)}, dead, 0.5)
     assert not overlaps_dead(set(), dead, 0.5)
+
+
+def _reference_frontiers(data, width, height, min_size):
+    """The original per-cell implementation, kept as the reference the fast
+    version must match exactly."""
+    from collections import deque
+
+    def valid(x, y):
+        return 0 <= x < width and 0 <= y < height
+
+    def is_frontier(x, y):
+        if not valid(x, y) or data[y * width + x] != 0:
+            return False
+        return any(
+            valid(nx, ny) and data[ny * width + nx] == -1
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1))
+        )
+
+    frontiers, visited = [], set()
+    for y in range(height):
+        for x in range(width):
+            if (x, y) in visited or not is_frontier(x, y):
+                continue
+            queue, cluster = deque([(x, y)]), []
+            visited.add((x, y))
+            while queue:
+                cx, cy = queue.popleft()
+                cluster.append((cx, cy))
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if valid(nx, ny) and (nx, ny) not in visited and is_frontier(nx, ny):
+                        visited.add((nx, ny))
+                        queue.append((nx, ny))
+            if len(cluster) >= min_size:
+                frontiers.append(cluster)
+    return frontiers
+
+
+def test_fast_frontiers_match_reference_exactly():
+    import random
+    from array import array
+    from go2_auto_mapper.frontier_scoring import find_frontier_clusters
+
+    rng = random.Random(7)
+    for trial in range(30):
+        w, h = rng.randint(5, 70), rng.randint(5, 70)
+        data = [rng.choice((FREE, FREE, FREE, UNKNOWN, WALL, 50)) for _ in range(w * h)]
+        for min_size in (1, 5):
+            expected = _reference_frontiers(data, w, h, min_size)
+            assert find_frontier_clusters(data, w, h, min_size) == expected
+            # OccupancyGrid.data arrives as array('b'), not a list.
+            assert find_frontier_clusters(array('b', data), w, h, min_size) == expected
