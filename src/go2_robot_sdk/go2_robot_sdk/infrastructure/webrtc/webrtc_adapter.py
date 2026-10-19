@@ -20,6 +20,10 @@ from ...application.utils.command_generator import gen_command, gen_mov_command
 from ...domain.constants import ROBOT_CMD, RTC_TOPIC
 
 logger = logging.getLogger(__name__)
+# The driver logs Python modules at WARN; the periodic stream summary is
+# meant to be seen, so it gets its own INFO-level logger (as the node does).
+stream_logger = logging.getLogger(__name__ + '.streams')
+stream_logger.setLevel(logging.INFO)
 
 
 class WebRTCAdapter(IRobotDataReceiver, IRobotController):
@@ -303,7 +307,7 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
                 for name, watch in (("lidar", lidar), ("camera", video))
                 if watch is not None
             ]
-            logger.info(f"Robot {robot_id} streams: {', '.join(rates)}")
+            stream_logger.info(f"Robot {robot_id} streams: {', '.join(rates)}")
             self.stream_log_at[robot_id] = now
         return True
 
