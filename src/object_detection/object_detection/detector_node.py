@@ -38,13 +38,18 @@ class ObjectDetector(Node):
         num_threads = self.declare_parameter("num_threads", 4).value
         # Inference runs at most this often; frames in between are dropped.
         max_rate_hz = self.declare_parameter("max_rate_hz", 5.0).value
+        # Minimum YOLO confidence for a detection. Below YOLO's own default
+        # (0.25) so more objects are found, at the cost of a few more false
+        # positives; raise it if you see too many.
+        self.confidence = float(self.declare_parameter("confidence", 0.15).value)
         self.min_period_sec = 1.0 / max_rate_hz if max_rate_hz > 0 else 0.0
         self.last_inference_sec = 0.0
 
         torch.set_num_threads(num_threads)
         self.get_logger().info(
             f"Loading YOLO model from {model_path} "
-            f"({num_threads} CPU threads, max {max_rate_hz} Hz)"
+            f"({num_threads} CPU threads, max {max_rate_hz} Hz, "
+            f"confidence >= {self.confidence})"
         )
         self.model = YOLO(model_path)
 
@@ -107,7 +112,7 @@ class ObjectDetector(Node):
 
         frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         # verbose=False: ultralytics otherwise prints a line per frame.
-        results = self.model(frame, verbose=False)
+        results = self.model(frame, conf=self.confidence, verbose=False)
 
         # Drawing and sending a full-size image is costly, so skip it when
         # nobody (e.g. an RViz Image display) is watching.
