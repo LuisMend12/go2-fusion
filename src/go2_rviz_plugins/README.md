@@ -12,7 +12,7 @@ Three RViz panels, loaded as plugins rather than run as separate apps:
   [go2_map_viewer_cpp](../go2_map_viewer_cpp), just docked inside RViz
   instead of its own SFML window.
 - **AutoMapper** — start/stop button and live log output for
-  `ros2 run go2_auto_mapper explorer` (see
+  go2_auto_mapper's explorer (see
   [go2_auto_mapper/README.md](../go2_auto_mapper/README.md) for what that
   node actually does), plus **Scan** and **Reset maps** buttons (below).
   There's no frontier count or current-goal readout here.
@@ -33,7 +33,8 @@ Three RViz panels, loaded as plugins rather than run as separate apps:
 ## MapViewer
 
 Click anywhere on the map to send a Nav2 goal there; **Cancel Goal** cancels
-whatever's active. Same goal-handle-generation and pending-cancel logic as
+whatever's active. Closing the panel or RViz also cancels the panel's goal,
+so the robot doesn't keep walking with no Cancel button left. Same goal-handle-generation and pending-cancel logic as
 `go2_map_viewer_cpp`'s standalone node, so rapid re-clicks or a cancel
 pressed before a goal is accepted both behave correctly instead of racing.
 
@@ -47,7 +48,13 @@ automatically since the emitting thread differs from the widget's own.
 
 **Start** launches the explorer as a child process (inheriting this
 process's already-ROS-sourced environment, since RViz itself was started
-through `ros2 launch`). **Stop** sends it `SIGINT` — not `QProcess`'s
+through `ros2 launch`). It runs the installed executable
+(`<prefix>/lib/go2_auto_mapper/explorer`) directly, not through `ros2 run`,
+so the explorer is RViz's own child: **Stop** reaches it, and if RViz exits
+or crashes, the explorer gets `SIGINT` and shuts down cleanly. Through
+`ros2 run`, the wrapper outlived RViz and the explorer kept running. If the
+executable can't be found, the panel falls back to `ros2 run` and says so in
+the log. **Stop** sends it `SIGINT` — not `QProcess`'s
 default `SIGTERM` — specifically so the explorer node's own
 `KeyboardInterrupt`/`ExternalShutdownException` handling runs and cancels
 any in-flight Nav2 goal before exiting, the same clean-shutdown path
@@ -60,12 +67,14 @@ watching the robot.
 
 Two buttons call `std_srvs/Trigger` services through the panel's own
 `rclcpp::Node` (`go2_rviz_auto_mapper_panel`, spun like MapViewer's); the
-reply shows in the log:
+reply shows in the log. A request with no reply in 5 s is dropped and the
+button comes back:
 
 - **Scan** → `/frontier_explorer/scan`: the robot turns 360 degrees (it
   moves). Needs the explorer running.
 - **Reset maps** (asks to confirm) starts both maps over from where the
-  robot stands:
+  robot stands. It refuses while the explorer runs: press **Stop** first,
+  since the explorer's goals and frontiers belong to the old map.
   - 2D: stops `slam_toolbox` (`pkill -INT -f async_slam_toolbox_node`);
     `robot.launch.py` starts it with `respawn=True`, so it comes straight
     back with an empty `/map`. Humble's slam_toolbox has no reset service.

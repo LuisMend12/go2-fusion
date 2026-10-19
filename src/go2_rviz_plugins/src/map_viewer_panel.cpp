@@ -16,6 +16,12 @@ namespace
 {
 constexpr double kHintBarPx = 24.0;
 
+// How long the spin thread waits for work before checking whether to stop.
+constexpr auto kSpinPollPeriod = std::chrono::milliseconds(100);
+
+// How long closing the panel waits for Nav2 to accept the cancel of its goal.
+constexpr auto kCancelOnCloseTimeout = std::chrono::seconds(1);
+
 // 0 = free -> white, 100 = occupied -> black, -1 = unknown -> mid gray.
 QRgb cellColor(int8_t value)
 {
@@ -240,6 +246,23 @@ MapViewerPanel::MapViewerPanel(QWidget * parent)
 
 MapViewerPanel::~MapViewerPanel()
 {
+  // Destroying the action client doesn't stop Nav2: a goal sent from this
+  // panel would keep the robot walking with no Cancel button left. Cancel
+  // it while the spin thread is still running to carry the request out.
+  GoalHandleNav::SharedPtr handle;
+  {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    handle = current_goal_handle_;
+    current_goal_handle_.reset();
+    // A goal not yet accepted is cancelled by the response callback, if it
+    // arrives before the spin thread stops.
+    cancel_requested_ = true;
+  }
+  if (handle) {
+    nav_client_->async_cancel_goal(handle).wait_for(kCancelOnCloseTimeout);
+  }
+
+  stop_spinning_ = true;
   executor_.cancel();
   if (spin_thread_.joinable()) {
     spin_thread_.join();
@@ -248,7 +271,11 @@ MapViewerPanel::~MapViewerPanel()
 
 void MapViewerPanel::spinNode()
 {
-  executor_.spin();
+  // Not executor_.spin(): a cancel() that lands before spin() starts is lost,
+  // and the destructor's join() would then wait forever.
+  while (!stop_spinning_ && rclcpp::ok()) {
+    executor_.spin_once(kSpinPollPeriod);
+  }
 }
 
 void MapViewerPanel::setStatus(const QString & text)
@@ -357,9 +384,12 @@ void MapViewerPanel::sendGoal(double x, double y)
     [this, my_generation](const GoalHandleNav::WrappedResult & result) {
       {
         std::lock_guard<std::mutex> lock(goal_mutex_);
-        if (my_generation == goal_generation_) {
-          current_goal_handle_.reset();
+        if (my_generation != goal_generation_) {
+          // A replaced goal finishing (usually "cancelled") says nothing
+          // about the goal that is current now.
+          return;
         }
+        current_goal_handle_.reset();
       }
       const char * outcome = "UNKNOWN";
       switch (result.code) {

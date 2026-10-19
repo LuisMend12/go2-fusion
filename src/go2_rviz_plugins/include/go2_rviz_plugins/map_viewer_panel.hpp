@@ -119,6 +119,7 @@ private:
 
   rclcpp::Node::SharedPtr node_;
   rclcpp::executors::SingleThreadedExecutor executor_;
+  std::atomic<bool> stop_spinning_{false};
   std::thread spin_thread_;
 
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;

@@ -10,6 +10,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.signals import SignalHandlerOptions
 
 from nav_msgs.msg import OccupancyGrid
 from std_srvs.srv import Trigger
@@ -2012,7 +2013,13 @@ def main(args=None):
 
     stop_when_parent_dies()
 
-    rclpy.init(args=args)
+    # rclpy's own SIGINT handler shuts the ROS context down at once, so
+    # stop() would then publish and cancel on a dead context, and Nav2 keeps
+    # driving to the last goal. Without it, SIGINT raises KeyboardInterrupt
+    # (Python's default) and stop() runs while ROS still works. SIGTERM
+    # (e.g. docker stop) is treated the same way.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
 
     node = FrontierExplorer()
 
