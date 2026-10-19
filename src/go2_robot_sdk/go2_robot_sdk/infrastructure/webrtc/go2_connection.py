@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import base64
+import time
 from typing import Callable, Optional, Any, Dict, Union
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 
@@ -68,6 +69,9 @@ class Go2Connection:
         # not just a failed initial connect.
         self.on_disconnected = on_disconnected
         self._was_connected = False
+        # Monotonic time of the last data-channel message, for spotting a
+        # channel that goes quiet without closing (see connection_health).
+        self.last_message_mono = None
 
         # Initialize components
         self.http_client = HttpClient(timeout=10.0)
@@ -130,6 +134,7 @@ class Go2Connection:
     
     def on_data_channel_message(self, message: Union[str, bytes]) -> None:
         """Handle incoming data channel messages"""
+        self.last_message_mono = time.monotonic()
         try:
             logger.debug(f"Received message: {message}")
             

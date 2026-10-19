@@ -4,11 +4,13 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Callable, Dict, Any
 
 from ...domain.interfaces import IRobotDataReceiver, IRobotController
 from ...domain.entities import RobotData, RobotConfig
 from .go2_connection import Go2Connection
+from .connection_health import DATA_STALL_TIMEOUT_SEC, data_stalled
 from ...application.utils.command_generator import gen_command, gen_mov_command
 from ...domain.constants import ROBOT_CMD, RTC_TOPIC
 
@@ -81,7 +83,23 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
         drop that happens well after the initial connect still raises and
         reaches main.py's retry logic, instead of going unnoticed forever."""
         event = self.disconnected_events.get(robot_id)
-        return event is not None and not event.is_set()
+        if event is None or event.is_set():
+            return False
+        # A data channel can also go quiet without closing (video still
+        # arriving, odometry and lidar not). Count that as a drop too, so the
+        # same retry logic reconnects instead of running blind forever.
+        conn = self.connections.get(robot_id)
+        if conn is not None and data_stalled(
+            getattr(conn, 'last_message_mono', None), time.monotonic()
+        ):
+            logger.error(
+                f"No data from robot {robot_id} for over "
+                f"{DATA_STALL_TIMEOUT_SEC:.0f} s (odometry, lidar, state); "
+                "treating the connection as lost"
+            )
+            event.set()
+            return False
+        return True
 
     async def disconnect(self, robot_id: str) -> None:
         """Disconnect from robot"""

@@ -39,6 +39,8 @@ private slots:
   void onPublishTimer();
 
 private:
+  // Publish the velocity for the keys held now (nothing when none are).
+  void publishHeld();
   void publishStop();
   void updateStatus();
 

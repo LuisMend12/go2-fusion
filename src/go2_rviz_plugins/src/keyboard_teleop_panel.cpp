@@ -21,7 +21,10 @@ constexpr double kAngularSpeedMin = 0.3;
 constexpr double kAngularSpeedMax = 2.5;
 constexpr double kLinearSpeedStep = 0.1;
 constexpr double kAngularSpeedStep = 0.3;
-constexpr int kPublishRateHz = 10;
+// Repeat rate while keys are held. Changes (press, release, speed) publish at
+// once, so this only keeps the twist_mux input alive (0.5 s timeout) and
+// bounds how stale a dropped message can leave the robot.
+constexpr int kPublishRateHz = 20;
 }  // namespace
 
 KeyboardTeleopPanel::KeyboardTeleopPanel(QWidget * parent)
@@ -80,6 +83,11 @@ void KeyboardTeleopPanel::publishStop()
 
 void KeyboardTeleopPanel::onPublishTimer()
 {
+  publishHeld();
+}
+
+void KeyboardTeleopPanel::publishHeld()
+{
   // Publish only while a key is held. An idle stream of zeros on
   // /cmd_vel_keyboard (twist_mux priority 9) would hold the keyboard lane
   // active forever and block Nav2, the agent and object navigation.
@@ -127,16 +135,20 @@ void KeyboardTeleopPanel::keyPressEvent(QKeyEvent * event)
     case Qt::Key_Q:
     case Qt::Key_E:
       held_keys_.insert(event->key());
+      // Send now, not on the next timer tick (up to 1/kPublishRateHz later).
+      publishHeld();
       updateStatus();
       break;
     case Qt::Key_Z:
       linear_speed_ = std::max(kLinearSpeedMin, linear_speed_ - kLinearSpeedStep);
       angular_speed_ = std::max(kAngularSpeedMin, angular_speed_ - kAngularSpeedStep);
+      publishHeld();
       updateStatus();
       break;
     case Qt::Key_X:
       linear_speed_ = std::min(kLinearSpeedMax, linear_speed_ + kLinearSpeedStep);
       angular_speed_ = std::min(kAngularSpeedMax, angular_speed_ + kAngularSpeedStep);
+      publishHeld();
       updateStatus();
       break;
     case Qt::Key_Space:
@@ -161,6 +173,8 @@ void KeyboardTeleopPanel::keyReleaseEvent(QKeyEvent * event)
   if (held_keys_.remove(event->key())) {
     if (held_keys_.isEmpty()) {
       publishStop();
+    } else {
+      publishHeld();  // e.g. W+A -> W: stop turning now, not next tick
     }
     updateStatus();
     event->accept();
