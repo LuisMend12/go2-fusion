@@ -8,6 +8,9 @@ it doesn't bypass Nav2's own obstacle avoidance.
 **This moves the robot on its own.** Only run it when you're physically
 present, watching the robot, in a cleared area.
 
+How the code is built (modules, goal choice, recovery, safety, known issues):
+[docs/AUTO_MAPPER.md](../../docs/AUTO_MAPPER.md).
+
 ## Prerequisites
 
 The main robot stack must already be running (SLAM + Nav2 active), either
@@ -39,7 +42,7 @@ ros2 run go2_auto_mapper explorer
 1. Every 2 seconds, it scans the current map for frontier cells — free
    space directly adjacent to unexplored (unknown) space.
 2. Frontier cells are clustered into regions; regions smaller than
-   `min_frontier_size` (default 5 cells) are ignored as noise.
+   `min_frontier_size` (default 3 cells) are ignored as noise.
 3. Each region offers target points (its middle, plus one about every
    meter along long regions). The goal for a point is a known-free cell
    `goal_distance` meters back toward the robot, at least `wall_clearance`
@@ -86,7 +89,7 @@ ros2 run go2_auto_mapper explorer
 7. **When stuck, it heads for open space.** Stuck means `stuck_failure_count`
    (3) goals failed in a row, an obstacle-ahead abort, or "No usable goal"
    twice running. It then finds the nearest known-free spot with at least
-   `open_space_clearance` (0.8 m) of room on every side, searching through
+   `open_space_clearance` (0.6 m) of room on every side, searching through
    free space up to 4 m away (so not through walls), drives there, scans,
    and carries on exploring. A failed escape doesn't trigger another one,
    and escapes are at least 30 s apart.
@@ -139,17 +142,17 @@ whatever Nav2 was commanding.
 | `map_topic` | `/map` | Occupancy grid topic to read |
 | `robot_frame` | `base_link` | TF frame for the robot's position |
 | `map_frame` | `map` | TF frame the map is published in |
-| `min_frontier_size` | `5` | Minimum cluster size (in cells) to count as a real frontier |
+| `min_frontier_size` | `3` | Minimum cluster size (in cells) to count as a real frontier |
 | `goal_distance` | `0.8` | How far inside known space, toward the robot, to place the goal |
 | `min_goal_distance` | `1.5` | Skip goals closer than this (meters) while any farther frontier is left |
-| `wall_clearance` | `0.5` | Skip goal spots closer than this (meters) to a wall in the SLAM map |
+| `wall_clearance` | `0.35` | Skip goal spots closer than this (meters) to a wall in the SLAM map |
 | `info_gain_range` | `4.0` | How far (meters) the lidar is assumed to see when estimating what a goal would reveal |
 | `info_gain_rays` | `48` | Rays cast per candidate for that estimate |
 | `info_gain_cells_per_meter` | `100.0` | Unknown cells a meter of travel must be worth (400 cells = 1 m² at 5 cm) |
-| `obstacle_stop_distance` | `0.3` | Gap (meters) in front of the nose that counts as blocked |
+| `obstacle_stop_distance` | `0.15` | Gap (meters) in front of the nose that counts as blocked |
 | `blocked_timeout` | `0.0` | Seconds an obstacle must stay ahead before a goal is given up (0 = at once) |
 | `backup_distance` | `0.3` | How far (meters) to back up after giving up a blocked goal |
-| `open_space_clearance` | `0.8` | Room (meters) on every side that counts as open space when stuck |
+| `open_space_clearance` | `0.6` | Room (meters) on every side that counts as open space when stuck |
 | `stuck_failure_count` | `3` | Failed goals in a row that count as stuck |
 | `scan_on_start` | `true` | Turn a full circle before exploring |
 | `scan_after_goal` | `true` | Turn a full circle after each goal it reaches |

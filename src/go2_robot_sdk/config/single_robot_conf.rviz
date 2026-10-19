@@ -474,8 +474,8 @@ Visualization Manager:
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.7618959546089172
-        Y: -1.3177106380462646
+        X: 0
+        Y: 0
         Z: 0
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
@@ -483,7 +483,9 @@ Visualization Manager:
       Name: Current View
       Near Clip Distance: 0.009999999776482582
       Pitch: 0.46979716420173645
-      Target Frame: <Fixed Frame>
+      # Follow the robot: with the fixed frame, the camera stayed where the
+      # robot started, and after driving off it showed only the old room.
+      Target Frame: base_link
       Value: XYOrbit (rviz_default_plugins)
       Yaw: 4.827390670776367
     Saved: ~
