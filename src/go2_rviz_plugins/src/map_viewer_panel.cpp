@@ -19,8 +19,8 @@ constexpr double kHintBarPx = 24.0;
 // How long the spin thread waits for work before checking whether to stop.
 constexpr auto kSpinPollPeriod = std::chrono::milliseconds(100);
 
-// How long closing the panel waits for Nav2 to accept the cancel of its goal.
-constexpr auto kCancelOnCloseTimeout = std::chrono::seconds(1);
+// How long closing the panel waits for Nav2 to answer its goals and cancels.
+constexpr auto kCancelOnCloseTimeout = std::chrono::seconds(2);
 
 // 0 = free -> white, 100 = occupied -> black, -1 = unknown -> mid gray.
 QRgb cellColor(int8_t value)
@@ -248,18 +248,28 @@ MapViewerPanel::~MapViewerPanel()
 {
   // Destroying the action client doesn't stop Nav2: a goal sent from this
   // panel would keep the robot walking with no Cancel button left. Cancel
-  // it while the spin thread is still running to carry the request out.
-  GoalHandleNav::SharedPtr handle;
+  // it while the spin thread is still running to carry the requests out.
+  const auto deadline = std::chrono::steady_clock::now() + kCancelOnCloseTimeout;
+  bool unanswered = false;
   {
-    std::lock_guard<std::mutex> lock(goal_mutex_);
-    handle = current_goal_handle_;
-    current_goal_handle_.reset();
-    // A goal not yet accepted is cancelled by the response callback, if it
-    // arrives before the spin thread stops.
-    cancel_requested_ = true;
+    std::unique_lock<std::mutex> lock(goal_mutex_);
+    closing_ = true;
+    if (current_goal_handle_) {
+      close_cancels_.push_back(nav_client_->async_cancel_goal(current_goal_handle_));
+      current_goal_handle_.reset();
+    }
+    // A goal not accepted yet has no handle: wait for Nav2's answer. The
+    // response callback cancels it if accepted (closing_ is set).
+    unanswered = !goals_answered_.wait_until(
+      lock, deadline, [this]() {return goals_awaiting_answer_ == 0;});
   }
-  if (handle) {
-    nav_client_->async_cancel_goal(handle).wait_for(kCancelOnCloseTimeout);
+  if (unanswered) {
+    // Nav2 may still accept it later, with nothing left to cancel it. This
+    // also cancels other nodes' goals: stopping the robot is the safe side.
+    close_cancels_.push_back(nav_client_->async_cancel_all_goals());
+  }
+  for (auto & cancel : close_cancels_) {
+    cancel.wait_until(deadline);
   }
 
   stop_spinning_ = true;
@@ -362,6 +372,15 @@ void MapViewerPanel::sendGoal(double x, double y)
   send_goal_options.goal_response_callback =
     [this, my_generation](const GoalHandleNav::SharedPtr & handle) {
       std::lock_guard<std::mutex> lock(goal_mutex_);
+      --goals_awaiting_answer_;
+      goals_answered_.notify_all();
+      if (closing_) {
+        // The panel is closing: nothing may keep driving, whatever goal it is.
+        if (handle) {
+          close_cancels_.push_back(nav_client_->async_cancel_goal(handle));
+        }
+        return;
+      }
       if (my_generation != goal_generation_) {
         return;
       }
@@ -402,6 +421,10 @@ void MapViewerPanel::sendGoal(double x, double y)
     };
 
   setStatus(QString("Sending goal: x=%1 y=%2").arg(x, 0, 'f', 2).arg(y, 0, 'f', 2));
+  {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    ++goals_awaiting_answer_;
+  }
   nav_client_->async_send_goal(goal_msg, send_goal_options);
 }
 
