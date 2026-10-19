@@ -66,14 +66,14 @@ class FrontierExplorer(Node):
         self.declare_parameter('robot_frame', 'base_link')
         self.declare_parameter('map_frame', 'map')
 
-        self.declare_parameter('min_frontier_size', 5)
+        self.declare_parameter('min_frontier_size', 3)
         self.declare_parameter('goal_distance', 0.8)
         # Frontiers closer than this are only used once no farther one is
         # left, so each leg covers new ground instead of shuffling in place.
         self.declare_parameter('min_goal_distance', 1.5)
         # Goals closer than this to a wall in the SLAM map are skipped:
         # Nav2 can't place the robot's body there, and it scrapes walls.
-        self.declare_parameter('wall_clearance', 0.5)
+        self.declare_parameter('wall_clearance', 0.35)
 
         # Ranking goals by what a visit would reveal (frontier_scoring.py):
         # unknown cells visible from the goal within info_gain_range, by
@@ -94,7 +94,7 @@ class FrontierExplorer(Node):
         # obstacle_stop_distance of the nose (for blocked_timeout seconds;
         # 0 = at once), back away. While driving, the goal is given up first
         # and the robot then heads somewhere open.
-        self.declare_parameter('obstacle_stop_distance', 0.3)
+        self.declare_parameter('obstacle_stop_distance', 0.15)
         self.declare_parameter('blocked_timeout', 0.0)
         self.declare_parameter('backup_distance', 0.3)
 
@@ -102,7 +102,7 @@ class FrontierExplorer(Node):
         # (or an obstacle-ahead abort, or no usable goal), drive to the
         # nearest spot with open_space_clearance meters of room on every
         # side, scan there, then carry on exploring.
-        self.declare_parameter('open_space_clearance', 0.8)
+        self.declare_parameter('open_space_clearance', 0.6)
         self.declare_parameter('stuck_failure_count', 3)
 
         self.map_topic = self.get_parameter(
