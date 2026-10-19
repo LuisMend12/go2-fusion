@@ -165,7 +165,7 @@ void AutoMapperPanel::onStartStopClicked()
         "Stop and closing RViz may then leave it running (see the README).");
       process_->start("ros2", {"run", "go2_auto_mapper", "explorer"});
     } else {
-      process_->start(explorer, {});
+      process_->start(explorer, QStringList());
     }
   } else {
     stopping_ = true;

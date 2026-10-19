@@ -250,7 +250,7 @@ MapViewerPanel::~MapViewerPanel()
   // panel would keep the robot walking with no Cancel button left. Cancel
   // it while the spin thread is still running to carry the requests out.
   const auto deadline = std::chrono::steady_clock::now() + kCancelOnCloseTimeout;
-  bool unanswered = false;
+  std::vector<CancelFuture> cancels;
   {
     std::unique_lock<std::mutex> lock(goal_mutex_);
     closing_ = true;
@@ -260,16 +260,21 @@ MapViewerPanel::~MapViewerPanel()
     }
     // A goal not accepted yet has no handle: wait for Nav2's answer. The
     // response callback cancels it if accepted (closing_ is set).
-    unanswered = !goals_answered_.wait_until(
+    const bool answered = goals_answered_.wait_until(
       lock, deadline, [this]() {return goals_awaiting_answer_ == 0;});
+    if (!answered) {
+      // Nav2 may still accept it later, with nothing left to cancel it. This
+      // also cancels other nodes' goals: stopping the robot is the safe side.
+      close_cancels_.push_back(nav_client_->async_cancel_all_goals());
+    }
+    cancels = close_cancels_;
   }
-  if (unanswered) {
-    // Nav2 may still accept it later, with nothing left to cancel it. This
-    // also cancels other nodes' goals: stopping the robot is the safe side.
-    close_cancels_.push_back(nav_client_->async_cancel_all_goals());
-  }
-  for (auto & cancel : close_cancels_) {
-    cancel.wait_until(deadline);
+  // Its own deadline: the answer wait above may have used up the first one.
+  // Known limit: a goal Nav2 receives only after the cancel-all is not
+  // covered; that needs Nav2 to be failing already (no answer in 2 s).
+  const auto cancel_deadline = std::chrono::steady_clock::now() + kCancelOnCloseTimeout;
+  for (const auto & cancel : cancels) {
+    cancel.wait_until(cancel_deadline);
   }
 
   stop_spinning_ = true;

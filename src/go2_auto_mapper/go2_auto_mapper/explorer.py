@@ -1988,7 +1988,12 @@ class FrontierExplorer(Node):
         """Last resort on shutdown: Nav2 never answered one of our goals, so
         it may still accept and run it with nobody tracking it. Cancel every
         goal on that action (a zero goal ID and stamp means all), even other
-        nodes' goals: stopping the robot is the safe outcome."""
+        nodes' goals: stopping the robot is the safe outcome.
+
+        Known limit: a goal Nav2 receives only after this cancel is not
+        covered. That needs Nav2 to be failing already (no answer in
+        SHUTDOWN_ACCEPT_WAIT_SEC); the keyboard or joystick still override it.
+        """
 
         self.get_logger().error(
             f'Nav2 never answered a {action_name} goal; cancelling all '
