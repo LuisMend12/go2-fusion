@@ -8,6 +8,9 @@ it doesn't bypass Nav2's own obstacle avoidance.
 **This moves the robot on its own.** Only run it when you're physically
 present, watching the robot, in a cleared area.
 
+How the code is built (modules, goal choice, recovery, safety, known issues):
+[docs/AUTO_MAPPER.md](../../docs/AUTO_MAPPER.md).
+
 ## Prerequisites
 
 The main robot stack must already be running (SLAM + Nav2 active), either
