@@ -4,9 +4,9 @@
 Reads README.md (the center node "oak"), docs/wiki/*.md and docs/team.yml,
 and writes site/graph.json for the workspace site in site/.
 
-    python3 scripts/wiki/build_graph.py && python3 -m http.server -d site 8765
+    npm run wiki      # builds, serves http://localhost:4410/ and live-reloads
 
-Then open http://localhost:8765/.
+or by hand: python3 scripts/wiki/build_graph.py, then serve site/.
 
 What goes in (the full shape is in scripts/wiki/README.md):
 - pages, their parent and link edges, backlinks, a one-sentence summary and a

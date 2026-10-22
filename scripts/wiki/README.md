@@ -4,19 +4,20 @@ The wiki is a graph. [README.md](../../README.md) is the center node, Oak. It li
 
 ## View it locally
 
-```shell
-python3 scripts/wiki/build_graph.py && python3 -m http.server -d site 8765
-```
-
-Then open http://localhost:8765/.
-
-Without a token, "work" and "questions" are empty; pages, people, last changes and recent commits still build from git. To include open issues, pull requests and questions, give it a read-only GitHub token:
+Needs Node.js 18+ and Python 3.8+ on your laptop (not in Docker). From the repo folder:
 
 ```shell
-GITHUB_TOKEN=$(gh auth token) GITHUB_REPOSITORY=maxhawksby/go2-fusion python3 scripts/wiki/build_graph.py
+npm install    # once; there are no packages to download, it only sets up the commands
+npm run wiki   # builds the data, serves site/ at http://localhost:4410/ and opens your browser
 ```
 
-It only reads from GitHub. Tests: `python3 -m unittest discover -s scripts/wiki/tests`.
+While it runs, saving README.md, a page in `docs/wiki/` or `docs/team.yml` rebuilds the data and reloads open browser tabs. If a page has a problem (say, a link to a page that does not exist), the tab keeps the last good version and shows the message. Options: `npm run wiki -- --port 4500`, `npm run wiki -- --no-open`. Stop it with Ctrl+C.
+
+GitHub data ("who is working on what" and questions) is on when you are signed in to the GitHub CLI (`gh auth login`) or `GITHUB_TOKEN` is set; it is refreshed every 5 minutes. It only reads from GitHub. Without a token, work and questions are empty; pages, people, last changes and recent commits still build from git.
+
+The launcher lives in [tools/oak-wiki/](../../tools/oak-wiki/) and uses only what ships with Node. It finds Python as `python3`, `python`, or on Windows `py -3`. By hand, without Node: `python3 scripts/wiki/build_graph.py`, then serve `site/` with any static server (for example `python3 -m http.server -d site 4410`).
+
+Checks and tests: `npm run wiki:check` runs [check_wiki.py](check_wiki.py) (add `-- --base <branch>` to compare with another branch), and `npm test` runs the Python tests plus the launcher's own tests.
 
 Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Open `#people/<id>` (for example `#people/max`) for a teammate's view: focus, open work, pages they have worked on and their recent changes, with their pages ringed on the map.
 

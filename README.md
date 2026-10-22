@@ -52,7 +52,13 @@ graph LR
 
 **You need:** a laptop with Docker Desktop and about 16 GB of RAM. Windows users also need WSL2 (Linux inside Windows). Macs work too. You do **not** need the robot.
 
-Everything runs inside **Docker**, which packs all the software into one identical box (a *container*), so nothing gets installed on your machine.
+**Open the team wiki first.** It shows every page, a map of how they connect, and who is working on what. It runs on your laptop, outside Docker, and needs only [Node.js](https://nodejs.org/) 18+ and Python 3.8+. From the repo folder:
+```shell
+npm install    # once
+npm run wiki   # opens http://localhost:4410 and reloads when a page changes
+```
+
+Everything else runs inside **Docker**, which packs all the software into one identical box (a *container*), so nothing gets installed on your machine.
 
 1. **Get the code and build** (the first build takes about 15 minutes, so start it and keep reading):
    ```shell

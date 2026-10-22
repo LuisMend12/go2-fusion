@@ -12,6 +12,8 @@ Part of: [Team](team.md)
 
 **How to reach anyone:** ask in the team Discord. For a question about a specific page, you can also open a GitHub issue labelled `wiki:<page>`.
 
+**See who is working on what right now:** open the team wiki on your laptop (`npm install` once, then `npm run wiki` from the repo folder; it needs Node.js 18+ and Python 3.8+). Each person's color marks their open work and recent changes, and clicking a name shows their pages.
+
 ## Luis
 
 - **GitHub:** [LuisMend12](https://github.com/LuisMend12) (commits also show as LuisM23). TODO(Max): Luis's full name.
