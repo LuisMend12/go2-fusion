@@ -69,6 +69,7 @@ If the build ever gets into a strange state, `docker compose down -v` deletes th
    git switch -c feat/<short-name> origin/master
    ```
 2. Keep it small: one feature or fix per branch, merged within days. If two people need to change the same lines, do one first.
+   Write each commit message as one short sentence saying exactly what changed, starting with the part of Oak it touches: `Auto mapper: skip frontiers it can't reach`, not `fix` or `wip`. Anyone reading the branch should know what you're working on without opening the code.
 3. Before opening a PR, replay your work on top of the latest `master`:
    ```shell
    git fetch
