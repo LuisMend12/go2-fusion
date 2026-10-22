@@ -39,7 +39,8 @@ Defined in `src/go2_robot_sdk/config/twist_mux.yaml`. twist_mux forwards the hig
 | --- | --- | --- |
 | 10 | `/cmd_vel_joy` | Gamepad, only while LB (deadman button) is held |
 | 9 | `/cmd_vel_keyboard` | `keyboard_teleop`, RViz KeyboardTeleop panel |
-| 5 | `/cmd_vel` | Nav2 (also `go2_auto_mapper` and the map viewers, through Nav2) |
+| 6 | `/cmd_vel_mapper` | `go2_auto_mapper` recovery moves (backing up or sliding when stuck) |
+| 5 | `/cmd_vel` | Nav2 (also `go2_auto_mapper` goals and the map viewers, through Nav2) |
 | 4 | `/cmd_vel_agent` | `go2_llm_agent` |
 | 3 | `/cmd_vel_object_nav` | `object_navigation` |
 
@@ -67,6 +68,6 @@ Robot test results live in [TEST_LOG.md](TEST_LOG.md).
 1. **Lidar topic mismatch (verify on the robot first).** Luis's remap (row 15) now fixes this for `robot.launch.py`; confirm on the robot and check `robot_cpp.launch.py`. `lidar_processor`'s `lidar_to_pointcloud` subscribes to `/robot0/point_cloud2` in single-robot mode, but the driver publishes `/point_cloud2`. Check on the robot before changing it.
 2. **Faster lidar decoder.** The `fix_hz_lidar_stream` branch swaps the WASM lidar decoder for an LZ4 one (claimed about 2 Hz to about 62 Hz). Do not merge the branch (it deletes too much); if low lidar rate hurts mapping, port just its `lidar_decoder_lz4.py` into the current driver.
 3. **Retire `coco_detector`.** Once `object_detection` also publishes standard `vision_msgs/Detection2DArray`, remove `coco_detector` and decide whether YOLO should take over `/detected_objects`.
-4. **Robot re-test.** Nothing here was tested on the robot. Check: the driver reconnects after a Wi-Fi drop, releasing the gamepad stops the dog (zero `cmd_vel` is now sent), TTS with the new 4 KB chunks, each twist_mux input actually reaching the driver, the sit message, `object_detection` speed on CPU, the RViz panels, and `CONN_TYPE=webrtc` as the compose default.
-5. **Gamepad deadman button: test on the robot.** Done in this repo: the gamepad now publishes on `/cmd_vel_joy` (priority 10) and only while LB is held. Before, it sat on `/cmd_vel` (priority 5) and its idle stream of zeros froze the LLM agent and object navigation, and the keyboard outranked it. Verified with simulated input in Docker; still confirm with the real Xbox controller that LB is button 4 (`ros2 topic echo /joy`).
+4. **Robot re-test.** Partly done: the 2026-10-11 lab session in [TEST_LOG.md](TEST_LOG.md) passed connect, camera, RViz, lidar, YOLO speed on CPU and the twist_mux priority order, and found the idle keyboard bug (row 16). Still to check: the driver reconnects after a Wi-Fi drop, a drive source going quiet stops the dog (zero `cmd_vel` is now sent), TTS with the new 4 KB chunks, each twist_mux input actually reaching the driver, the sit message, the RViz panels, and `CONN_TYPE=webrtc` as the compose default.
+5. **Gamepad: LB deadman test no longer required.** The team no longer drives with an Xbox gamepad; it uses the Oak ROS2 pad, which sends signals differently. The code is unchanged: a pad on `/joy` still drives through `teleop_twist_joy` on `/cmd_vel_joy` (priority 10) only while LB (button 4) is held, which was verified with simulated input in Docker. The Oak ROS2 pad talks straight to Oak and skips ROS (Max, 2026-10-22).
 6. **`webrtc_web.launch.py` skips twist_mux.** That launch file connects the driver straight to `/cmd_vel`, so the keyboard, agent and object-navigation topics do nothing there. Only `robot.launch.py` / `robot_cpp.launch.py` use the priority table.

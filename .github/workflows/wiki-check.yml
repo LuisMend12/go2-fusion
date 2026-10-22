@@ -1,0 +1,32 @@
+# Keeps the team wiki (README.md + docs/wiki/) correct on every pull request.
+# Free: plain Python on a GitHub runner. No AI, no secrets.
+# What it checks, and how to fix each failure, is explained in
+# scripts/wiki/check_wiki.py and .claude/skills/wiki-keeper/SKILL.md.
+# Until docs/wiki/ exists, the checker passes with a note.
+name: Wiki check
+
+on:
+  pull_request:
+    branches: [master]
+    # "edited" re-runs the check when someone adds
+    # "wiki: no change needed - <reason>" to the pull request description.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  wiki-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history, so the checker can find what this PR changed
+
+      - name: Test the checker itself
+        run: python3 -m unittest discover -s scripts/wiki/tests
+
+      - name: Check the wiki
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 scripts/wiki/check_wiki.py --base "origin/${{ github.base_ref }}"
