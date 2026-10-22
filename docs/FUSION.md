@@ -39,7 +39,8 @@ Defined in `src/go2_robot_sdk/config/twist_mux.yaml`. twist_mux forwards the hig
 | --- | --- | --- |
 | 10 | `/cmd_vel_joy` | Gamepad, only while LB (deadman button) is held |
 | 9 | `/cmd_vel_keyboard` | `keyboard_teleop`, RViz KeyboardTeleop panel |
-| 5 | `/cmd_vel` | Nav2 (also `go2_auto_mapper` and the map viewers, through Nav2) |
+| 6 | `/cmd_vel_mapper` | `go2_auto_mapper` recovery moves (backing up or sliding when stuck) |
+| 5 | `/cmd_vel` | Nav2 (also `go2_auto_mapper` goals and the map viewers, through Nav2) |
 | 4 | `/cmd_vel_agent` | `go2_llm_agent` |
 | 3 | `/cmd_vel_object_nav` | `object_navigation` |
 

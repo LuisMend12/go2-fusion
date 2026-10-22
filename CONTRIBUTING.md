@@ -91,6 +91,6 @@ Your AI agent does all of this for you through the wiki-keeper steps in [AGENTS.
 
 ## Design rules
 
-- **Extend before adding.** Before creating a new node or topic, check whether an existing one should own it. Robot commands go on `/webrtc_req`, speech on `/tts`. Motion goes on a twist_mux input: each drive source has its own (`/cmd_vel_joy`, `/cmd_vel_keyboard`, `/cmd_vel` for Nav2, `/cmd_vel_agent`, `/cmd_vel_object_nav`; see `src/go2_robot_sdk/config/twist_mux.yaml`), so a new one gets a new input rather than sharing.
+- **Extend before adding.** Before creating a new node or topic, check whether an existing one should own it. Robot commands go on `/webrtc_req`, speech on `/tts`. Motion goes on a twist_mux input: each drive source has its own (`/cmd_vel_joy`, `/cmd_vel_keyboard`, `/cmd_vel_mapper` for auto mapper recovery moves, `/cmd_vel` for Nav2, `/cmd_vel_agent`, `/cmd_vel_object_nav`; see `src/go2_robot_sdk/config/twist_mux.yaml`), so a new one gets a new input rather than sharing.
 - **One ROS 2 distro for everyone:** Humble.
 - **Test without the robot first.** There is one dog and it accepts one connection at a time. Check what your code sends with `ros2 topic echo /cmd_vel_keyboard` (or whichever topic you publish), and save lab time for the final check.
