@@ -6,7 +6,7 @@ Quick steps for connecting to the ISL lab's Unitree Go2 using the Docker setup i
 
 - [ ] Find the dog's firmware version (Unitree app: Device -> Data).
 - [ ] If firmware is **1.1.15 or newer**, get the dog's AES key ahead of time.
-      See "Go2 firmware >= 1.1.15" in the main [README](../README.md#go2-firmware--1115-webrtc-local-connection).
+      See "Go2 firmware >= 1.1.15" in the main [upstream README](https://github.com/abizovnuralem/go2_ros2_sdk#go2-firmware--1115-webrtc-local-connection).
 - [ ] Don't run `docker system prune` or delete images. That wipes the built
       image and forces a ~15 min rebuild.
 
