@@ -75,8 +75,19 @@ If the build ever gets into a strange state, `docker compose down -v` deletes th
    git rebase origin/master
    git push -u origin feat/<short-name>    # add --force-with-lease if you pushed before the rebase
    ```
-4. Open a pull request. A teammate reviews it, then it's merged and the branch deleted.
+4. Open a pull request. Your own branches are personal sandboxes and need no review; only merging into `master` does: one teammate's approval plus green automatic checks. Then it's merged and the branch deleted.
 5. Everyone else picks it up with `git fetch && git rebase origin/master` on their own branch.
+
+## Keeping the wiki current
+
+The team docs are a wiki: `README.md` is the center page "Oak", and `docs/wiki/` holds one hub page per area plus one page per program. Each page lists the code it describes, so an automatic check on every pull request notices when you change a program but not its page.
+
+- Starting a task? Open (or reuse) a GitHub issue, add the label `wiki:<page-name>`, and assign yourself, so the wiki graph shows who is working on what.
+- Changed a program, or added or removed a package? Update its page in plain English: what it does, what it uses, how it breaks. Write `TODO(owner)` for anything you don't know. A new package gets a new page linked from its hub.
+- Check before you open a pull request: `python3 scripts/wiki/check_wiki.py`. It says exactly what to fix.
+- If your change really doesn't affect the page (say, a rename), add this line to the pull request description instead: `wiki: no change needed - <reason>`.
+
+Your AI agent does all of this for you through the wiki-keeper steps in [AGENTS.md](AGENTS.md).
 
 ## Design rules
 
