@@ -27,6 +27,18 @@ If you are using WebRTC (Wi-Fi) protocol, close the connection with a mobile app
 > `host_tools/speech_to_text`. See [FUSION.md](docs/FUSION.md) for what came from where and why,
 > [AGENTS.md](AGENTS.md) for the package and topic list, and [USEFUL_COMMANDS.md](docs/USEFUL_COMMANDS.md) for a cheat sheet.
 
+## Wiki
+
+Our robot dog is Oak. The team wiki starts here and branches into seven hubs:
+[Driving](docs/wiki/driving.md),
+[Driver](docs/wiki/driver.md),
+[Senses](docs/wiki/senses.md),
+[Maps and navigation](docs/wiki/maps-nav.md),
+[Brains](docs/wiki/brains.md),
+[Lab setup](docs/wiki/lab-setup.md),
+[Team](docs/wiki/team.md).
+See it as a 3D graph with `python3 scripts/wiki/build_graph.py && python3 -m http.server -d site 8765` ([how](scripts/wiki/README.md)).
+
 
 ## Project RoadMap:
 
