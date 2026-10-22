@@ -42,7 +42,7 @@
       return r.json();
     });
   }
-  getJSON("graph.json")
+  (window.OAK_GRAPH ? Promise.resolve(window.OAK_GRAPH) : getJSON("graph.json"))
     .catch(() => getJSON("sample-graph.json").then((d) => Object.assign(d, { sample: true })))
     .then(start)
     .catch((err) => {

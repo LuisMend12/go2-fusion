@@ -673,6 +673,9 @@ def main():
     graph = build()
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(graph, indent=1), encoding="utf-8")
+    # The same data as a script, for viewers that block fetch(): a sandboxed
+    # frame (Lavish review) or opening index.html straight from disk.
+    OUT.with_suffix(".js").write_text("window.OAK_GRAPH = " + json.dumps(graph) + ";\n", encoding="utf-8")
     links = sum(1 for e in graph["edges"] if e["kind"] == "link")
     prs = sum(1 for w in graph["work"] if w["kind"] == "pr")
     print(f"Wrote {rel(OUT)}: {len(graph['nodes'])} pages, {len(graph['edges']) - links} parent edges, "

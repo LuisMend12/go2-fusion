@@ -20,3 +20,4 @@ src/go2_robot_sdk/coverage.xml
 
 # Built by scripts/wiki/build_graph.py
 site/graph.json
+site/graph.js
