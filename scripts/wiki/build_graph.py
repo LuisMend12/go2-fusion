@@ -370,10 +370,15 @@ def pages_for_files(files, pages):
     return sorted(hit)
 
 
-def git_commits(limit=3000):
-    """Commits newest first: {sha,date,author,email,message,files}."""
+def git_commits(limit=3000, all_branches=False):
+    """Commits newest first: {sha,date,author,email,message,files}.
+
+    all_branches adds every remote branch, so work that hasn't reached master
+    yet (a teammate's feature branch) still counts as something they worked on.
+    """
+    refs = ["HEAD", "--remotes"] if all_branches else []
     r = subprocess.run(
-        ["git", "log", f"-{limit}", "--no-merges", "--format=%x1e%H%x1f%aI%x1f%an%x1f%ae%x1f%s", "--name-only"],
+        ["git", "log", *refs, f"-{limit}", "--no-merges", "--format=%x1e%H%x1f%aI%x1f%an%x1f%ae%x1f%s", "--name-only"],
         cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
         warn("git log failed; building without history.")
@@ -407,19 +412,43 @@ def history(commits, pages, people):
     return last, recent
 
 
+# Only program code counts as "worked on", not docs, configs at the root or Docker.
+CODE_ROOTS = ("src/", "host_tools/", "go2_map_viewer_julia/")
+BULK_COMMIT_FILES = 60
+
+
+def code_path(f, packages):
+    """Map a pre-src/ path (go2_llm_agent/x.py) to today's layout (src/go2_llm_agent/x.py).
+
+    Packages moved under src/ on 2026-10-20; older branches still use the
+    root layout, and their work should land on the same pages. `packages` is
+    the set of src/ folder names the wiki pages claim.
+    """
+    if "/" in f and not f.startswith(CODE_ROOTS) and f.split("/", 1)[0] in packages:
+        return "src/" + f
+    return f
+
+
 def contributions(commits, pages, people, limit=8):
     """Pages each person has worked on, from git: {person id: [slug, ...]}.
 
-    A commit counts for a page when it touches the page's file or its code:
-    paths. Pages are sorted by that person's commit count (ties by slug), top
+    A commit counts for a page when it touches program code (CODE_ROOTS) that
+    the page's code: paths cover. Docs, wiki edits and bulk moves don't count:
+    writing about a program or moving folders isn't working on it. Pages are sorted by that person's commit count (ties by slug), top
     `limit`. The center page (README.md) is left out: everyone edits it.
     """
     counts = {p["id"]: {} for p in people}
+    packages = {g.split("/")[1] for page in pages.values() for g in page["code"]
+                if g.startswith("src/") and g.count("/") >= 1}
     for c in commits:
         pid = match_person(people, name=c["author"], email=c["email"])
         if pid is None:
             continue
-        for page in pages_for_files(c["files"], pages):
+        if len(c["files"]) > BULK_COMMIT_FILES:
+            continue  # a repo-wide move or cleanup says nothing about who works on what
+        code_files = [code_path(f, packages) for f in c["files"]]
+        code_files = [f for f in code_files if f.startswith(CODE_ROOTS)]
+        for page in pages_for_files(code_files, pages):
             if page != CENTER:
                 counts[pid][page] = counts[pid].get(page, 0) + 1
     return {pid: [s for s, _ in sorted(cs.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
@@ -592,7 +621,7 @@ def build():
     people = load_team()
     commits = git_commits()
     last, recent = history(commits, pages, people)
-    contributed = contributions(commits, pages, people)
+    contributed = contributions(git_commits(all_branches=True), pages, people)
     for p in people:
         unknown = [s for s in p["past"] if s not in pages]
         if unknown:

@@ -131,7 +131,8 @@ class TestPeople(unittest.TestCase):
         commits = [
             c("LuisM23", luis, "src/lidar/a.py", "README.md"),
             c("LuisMend12", luis, "src/lidar/b.py"),
-            c("LuisMend12", luis, "docs/wiki/slam.md"),
+            c("LuisMend12", luis, "docs/wiki/slam.md"),        # wiki edit: not code work
+            c("LuisMend12", luis, "slam/old_layout.py"),        # pre-src/ layout still counts
             c("Max Hawksby", "max@example.com", "docs/wiki/voice.md", "src/voice/x.py"),
             c("Stranger", "s@example.com", "src/slam/x.py"),
         ]
@@ -139,6 +140,8 @@ class TestPeople(unittest.TestCase):
         self.assertEqual(got["luis"], ["lidar", "slam"])  # 2 commits, then 1; Oak left out
         self.assertEqual(got["max"], ["voice"])            # one commit, counted once
         self.assertEqual(bg.contributions(commits, pages, PEOPLE, limit=1)["luis"], ["lidar"])
+        bulk = [c("LuisMend12", luis, *[f"src/voice/{i}.py" for i in range(bg.BULK_COMMIT_FILES + 1)])]
+        self.assertEqual(bg.contributions(bulk, pages, PEOPLE)["luis"], [])  # a repo-wide move says nothing
 
     def test_match_by_login_email_and_name(self):
         m = bg.match_person
