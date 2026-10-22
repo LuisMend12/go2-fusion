@@ -60,8 +60,17 @@ On Windows hosts, add `-f docker-compose.windows.yml` to every `docker compose` 
 - **Test without the robot first.** There is one robot and it accepts one connection at a time. Verify what your code publishes with `ros2 topic echo <topic>`. Never send motion commands to a live robot unless the human asks.
 - Never commit secrets: `ROBOT_AES_KEY`, lab wifi or router credentials.
 
+## Wiki
+
+The team docs are a wiki graph: `README.md` is the center page "Oak", hub pages and one page per program live in `docs/wiki/<slug>.md`, each with `title`, `parent` and optional `code:` globs in its front matter. A pull request check fails when code changes but its page does not. Follow the steps in [.claude/skills/wiki-keeper/SKILL.md](.claude/skills/wiki-keeper/SKILL.md) (Claude Code loads it as a skill; Codex and Cursor: read and follow it):
+
+- Starting a task: open or reuse a GitHub issue, label it `wiki:<slug>`, assign yourself.
+- After changing `src/`, `host_tools/` or `docker/`, or adding or removing a package, and before every pull request: run `python3 scripts/wiki/check_wiki.py` and update each flagged page in plain freshman English (what it does, what it uses, how it breaks). Mark unknowns `TODO(owner)`; never invent facts. Re-run until it passes.
+- If a change truly needs no wiki edit, put `wiki: no change needed - <reason>` in the pull request description.
+
 ## Git
 
 - Never commit to `master`. Branch from the latest master: `git fetch && git switch -c feat/<short-name> origin/master`.
+- Your own branches are personal sandboxes: commit and push to them freely, no review needed.
 - Keep branches small (one feature or fix). Before opening a PR: `git fetch && git rebase origin/master`.
-- Merge through a GitHub pull request reviewed by a teammate; don't push to `master` directly.
+- Only merging into `master` needs review: a GitHub pull request with one teammate's approval and green automatic checks. Don't push to `master` directly.
