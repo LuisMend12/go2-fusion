@@ -67,6 +67,8 @@ The team docs are a wiki graph: `README.md` is the center page "Oak", hub pages 
 - Starting a task: open or reuse a GitHub issue, label it `wiki:<slug>`, assign yourself.
 - After changing `src/`, `host_tools/` or `docker/`, or adding or removing a package, and before every pull request: run `python3 scripts/wiki/check_wiki.py` and update each flagged page in plain freshman English (what it does, what it uses, how it breaks). Mark unknowns `TODO(owner)`; never invent facts. Re-run until it passes.
 - If a change truly needs no wiki edit, put `wiki: no change needed - <reason>` in the pull request description.
+- Answering questions: when asked, list open questions for the pages you know (`gh issue list --label question`), answer in plain English as an issue comment with links to the pages and code, and update the wiki page if the answer belongs there.
+- Asking for review: open the pull request and request a teammate (`gh pr edit <n> --add-reviewer <login>`, logins in `docs/team.yml`). Label nothing extra; the site and Discord pick it up.
 
 ## Git
 

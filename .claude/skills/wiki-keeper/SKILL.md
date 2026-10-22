@@ -1,6 +1,6 @@
 ---
 name: wiki-keeper
-description: Keep the team wiki (README.md + docs/wiki/) true to the code. Use whenever code under src/, host_tools/ or docker/ changes, when a package is added or removed, before opening a pull request, when starting a task (to claim it on the wiki graph), or when someone asks to update or check the wiki.
+description: Keep the team wiki (README.md + docs/wiki/) true to the code. Use whenever code under src/, host_tools/ or docker/ changes, when a package is added or removed, before opening a pull request, when starting a task (to claim it on the wiki graph), when someone asks to update or check the wiki, to answer wiki questions, or to ask a teammate for review.
 ---
 
 # Wiki keeper
@@ -45,6 +45,21 @@ If a change truly does not affect what any page says (a rename, a comment, a ref
 ```
 wiki: no change needed - <reason>
 ```
+
+## Answering questions
+
+Teammates ask questions on wiki pages from the site ("Ask the team"); each one is a GitHub issue labelled `question` and `wiki:<slug>`.
+
+1. When asked to answer questions, list the open ones for the pages you know: `gh issue list --label question` (narrow with `--label wiki:<slug>`), then `gh issue view <n>`.
+2. Read the page and its code, then answer in plain English a newcomer can follow, as a comment on the issue: `gh issue comment <n> --body "..."`. Link the wiki page and the code on GitHub (`https://github.com/maxhawksby/go2-fusion/blob/master/<path>`).
+3. If the answer belongs on the page (others will ask it too), update the page in the same pull request as any code change, or in a small wiki-only pull request.
+4. Never guess. If you don't know, say what you checked and who might know (the page's owner), and leave the question open.
+
+A comment from someone other than the asker marks the question answered on the site.
+
+## Asking for review
+
+Open the pull request (`gh pr create`) and request a teammate (`gh pr edit <n> --add-reviewer <login>`; logins are in `docs/team.yml`). Label nothing extra: the site shows the review request and Discord pings the reviewer and the page owners.
 
 ## What the checker checks
 

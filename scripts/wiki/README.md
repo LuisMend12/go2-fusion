@@ -1,6 +1,6 @@
-# Oak wiki graph site
+# Oak wiki workspace
 
-The wiki is a graph. [README.md](../../README.md) is the center node, Oak. It links to 7 hub pages in [docs/wiki/](../../docs/wiki/), and each hub links to one page per program.
+The wiki is a graph. [README.md](../../README.md) is the center node, Oak. It links to 7 hub pages in [docs/wiki/](../../docs/wiki/), and each hub links to one page per program. The site in `site/` shows it as a workspace: a page tree and search on the left, the page in the middle, a 2D graph on the right, plus who is working on what, recent changes and questions.
 
 ## View it locally
 
@@ -8,7 +8,15 @@ The wiki is a graph. [README.md](../../README.md) is the center node, Oak. It li
 python3 scripts/wiki/build_graph.py && python3 -m http.server -d site 8765
 ```
 
-Then open http://localhost:8765/. Click a node to read its page; links in the page move you through the graph.
+Then open http://localhost:8765/.
+
+Without a token, "work" and "questions" are empty; pages, people, last changes and recent commits still build from git. To include open issues, pull requests and questions, give it a read-only GitHub token:
+
+```shell
+GITHUB_TOKEN=$(gh auth token) GITHUB_REPOSITORY=maxhawksby/go2-fusion python3 scripts/wiki/build_graph.py
+```
+
+It only reads from GitHub. Tests: `python3 -m unittest discover -s scripts/wiki/tests`.
 
 ## Add a page
 
@@ -22,12 +30,42 @@ code: [src/object_detection/**]   # optional: repo paths this page documents
 ---
 ```
 
-Link pages with normal relative markdown links, for example `[Senses](senses.md)`. Add the new page to its parent's list. The generator stops with a message if a link points at a page that does not exist.
+Link pages with normal relative markdown links, for example `[Senses](senses.md)`. Add the new page to its parent's list. The generator stops with a message if a link points at a page that does not exist. The first sentence of the page becomes its summary.
 
-## Active work
+## The team: docs/team.yml
 
-Label a GitHub issue `wiki:<slug>` (for example `wiki:slam`) and assign it. On the next deploy, that node shows a badge and the panel says who is working on what. Locally this only works with `GITHUB_TOKEN` and `GITHUB_REPOSITORY` set.
+One block per person: `id` (short, lowercase), `name`, `github` (login), `color` (their color on the site), `discord_id` (numeric Discord user id, for @mentions; empty until filled in) and `focus` (one line). Commits and GitHub activity are matched to a person by GitHub login, by the `<login>@users.noreply.github.com` email, or by git author name. Keep the simple `key: value` shape; the builder reads it without a YAML library.
 
-## Deploy
+## Work, questions and reviews
 
-[.github/workflows/wiki-site.yml](../../.github/workflows/wiki-site.yml) rebuilds and deploys the site to GitHub Pages on every push to master that touches the wiki. Pages must be enabled once: Settings > Pages > Source: GitHub Actions.
+- Working on a page: label an issue `wiki:<slug>` and assign yourself. Open pull requests show up on their own: their changed files are matched to each page's `code:` paths (and wiki files changed directly).
+- Questions: an issue labelled `question` and `wiki:<slug>`. It counts as answered once someone other than the asker comments, or it has the label `answered`.
+- Review: a pull request with requested reviewers (or the label `review`).
+
+## graph.json v2
+
+`build_graph.py` writes `site/graph.json` (not committed):
+
+| Field | What it holds |
+| --- | --- |
+| `version`, `branch`, `published`, `generated_at`, `repo` | 2; the branch the GitHub links point at; whether that branch is on GitHub; build time; `owner/name` |
+| `people` | `docs/team.yml`: `id`, `name`, `github`, `color`, `discord_id`, `focus` |
+| `nodes` | one per page: `id`, `title`, `parent`, `hub`, `depth`, `code`, `path`, `markdown`, `summary`, `x`, `y` (fixed layout: Oak at 0,0, hubs on a ring, pages fanned out from their hub; same input gives the same positions), `backlinks` (pages linking here), `last_change` (`sha`, `date`, `author`, `person`, `message`, or null) |
+| `edges` | `source`, `target`, `kind` (`parent` or `link`) |
+| `work` | open issues (`wiki:<slug>`) and open pull requests: `kind`, `number`, `title`, `url`, `author`, `person`, `assignees` (team ids), `pages`, `review_requested`, `draft`, `updated_at` |
+| `questions` | `number`, `title`, `url`, `page`, `asker`, `answered`, `answer_excerpt`, `updated_at` (closed questions with no answer are dropped) |
+| `recent` | last 40 commits touching a page or its code: `sha`, `date`, `author`, `person`, `message`, `pages` |
+
+`person` is a team id, or null when the author is not in `docs/team.yml`.
+
+## Deploy and Discord
+
+[wiki-site.yml](../../.github/workflows/wiki-site.yml) rebuilds and deploys the site to GitHub Pages on pushes to master that touch the wiki, on issue, comment and pull request changes, and every 6 hours. It always builds master.
+
+[discord-ping.yml](../../.github/workflows/discord-ping.yml) runs [discord_ping.py](discord_ping.py) when an issue gets the `question` label or a pull request asks for review. It posts who asked, which page, the title and link, and mentions the page owners (people with open work on that page, else its last changer).
+
+One-time setup (Max):
+
+1. Create a Discord webhook (channel > Edit Channel > Integrations > Webhooks > New Webhook > Copy URL) and add it as the repo secret `DISCORD_WEBHOOK_URL` (Settings > Secrets and variables > Actions). Until then the ping logs "Discord not set up yet" and passes.
+2. Fill each person's `discord_id` in `docs/team.yml` (Discord: Settings > Advanced > Developer Mode on, then right-click a name > Copy User ID). Without it, pings name the person instead of @mentioning them.
+3. Enable Pages: Settings > Pages > Source: GitHub Actions.
