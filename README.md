@@ -113,7 +113,7 @@ Sources:
 - Team 48, vision, $3,000 figure, current-work list, issue labels, merge rules, wiki rule: Max's answers via coordinator, 2026-10-22 (not in repo yet)
 - Humble, Docker, 5-person team: AGENTS.md intro. Robot name "Oak": docs/FUSION.md, macos_setup.md
 - Images: original README.md "Real time Go2 Air/PRO/EDU joints sync" and "lidar point cloud" (URLs unchanged)
-- Features verified working on the robot 2026-10-11 (connect, camera, RViz, lidar ~6.8 Hz, YOLO ~4.5 fps, twist_mux priority): docs/TEST_LOG.md. Gamepad not robot-tested (FUSION follow-up 5). SLAM/Nav2 left out: Nav2 goal failed on old code, retest pending.
+- Features verified working on the robot 2026-10-11 (connect, camera, RViz, lidar ~6.8 Hz, YOLO ~4.5 fps, twist_mux priority): docs/TEST_LOG.md. Gamepad (Xbox) LB test no longer required: the team uses the Oak ROS2 pad (FUSION follow-up 5). SLAM/Nav2 left out: Nav2 goal failed on old code, retest pending.
 - twist_mux referee and priorities: docs/FUSION.md "twist_mux priorities"
 - 16 GB RAM: inferred from TEST_LOG build note (7.4 GB WSL ran out of memory at 16 parallel compiles). TODO(Max): confirm minimum.
 - Clone, build, aliases: CONTRIBUTING.md; docker/entrypoint.sh; docker/dev_aliases.sh; docker/Dockerfile:87-89

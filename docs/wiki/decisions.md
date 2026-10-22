@@ -30,7 +30,8 @@ Our fork is the base, because Riley's repo carried older copies of the same driv
    | --- | --- | --- |
    | 10 | `/cmd_vel_joy` | Gamepad, only while LB is held |
    | 9 | `/cmd_vel_keyboard` | Keyboard and the RViz keyboard panel |
-   | 5 | `/cmd_vel` | Nav2 (and the auto mapper and map viewers through it) |
+   | 6 | `/cmd_vel_mapper` | [Auto mapper](auto-mapper.md) recovery moves (added after the fusion) |
+   | 5 | `/cmd_vel` | Nav2 (and the auto mapper's goals and the map viewers through it) |
    | 4 | `/cmd_vel_agent` | [LLM agent](llm-agent.md) |
    | 3 | `/cmd_vel_object_nav` | [Object navigation](object-navigation.md) |
 
@@ -40,7 +41,7 @@ Our fork is the base, because Riley's repo carried older copies of the same driv
 6. **Docker:** keep our image (dependencies only, code mounted in, built on start), default to Wi-Fi (`CONN_TYPE=webrtc`), and give it 1 GB of shared memory so camera images do not run out of room. See [Docker](docker.md).
 7. **RViz's Map display stays off**, because it crashes under WSL. Luis's map viewer panel covers it.
 8. **Riley's extras left out:** semantic-mapping experiments that need an NVIDIA GPU, demo audio scripts, and older stubs.
-9. **Gamepad needs a held button (LB).** An idle gamepad sent "speed 0" 20 times a second and froze the agent and object navigation.
+9. **Gamepad needs a held button (LB).** An idle gamepad sent "speed 0" 20 times a second and froze the agent and object navigation. The code still works this way, but the team now uses the Oak ROS2 pad instead of an Xbox gamepad, so testing LB is no longer required (see [Gamepad](gamepad.md)).
 10. **Lab access details removed** from the repo. Ask a teammate privately.
 11. **Keyboard sends only while a key is held**, plus one stop. Found on the robot on 2026-10-11: idle zeros blocked Nav2, the agent and object navigation. See [Test log](test-log.md).
 
@@ -55,7 +56,7 @@ The record numbers these 1 to 16; this list keeps the ones that shape daily work
 
 ## Still open
 
-From the record's follow-ups: confirm the lidar topic on the robot, maybe port the faster lidar decoder, retire `coco_detector`, retest everything on the robot, test the gamepad button with a real controller, and note that `webrtc_web.launch.py` skips twist_mux, so priorities do not apply there.
+From the record's follow-ups: confirm the lidar topic on the robot, maybe port the faster lidar decoder, retire `coco_detector`, retest what the 2026-10-11 session did not cover (see [Test log](test-log.md)), and note that `webrtc_web.launch.py` skips twist_mux, so priorities do not apply there.
 
 ## Add a decision
 

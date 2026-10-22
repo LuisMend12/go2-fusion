@@ -28,7 +28,7 @@ When you let go, your lane goes quiet, and after half a second Nav2 takes over a
 1. [twist_mux](twist-mux.md) - the referee. Read this first: it explains the lanes and their priorities.
 2. [Keyboard teleop](keyboard-teleop.md) - drive Oak from a terminal with W, A, S, D. The easiest way to start.
 3. [RViz panels](rviz-panels.md) - three buttons-and-maps panels inside RViz: click on the map to send Oak somewhere, run the auto mapper, or drive with the keyboard without a terminal.
-4. [Gamepad](gamepad.md) - drive with a game controller while holding a safety button. Not yet tested on the real robot.
+4. [Gamepad](gamepad.md) - the hand-controller lane. The team now uses the Oak ROS2 pad, not an Xbox gamepad, so the old hold-LB test is no longer needed.
 
 "Teleop" is short for teleoperation: driving a robot remotely by hand.
 

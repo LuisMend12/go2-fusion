@@ -52,7 +52,6 @@ Topics (a topic is a named channel that ROS programs publish messages to and lis
 - **ID mix-ups on master.** Matching checks whether an ID starts with the class name, so `car` can match `carrot_1`, and after an object expires a new one can reuse a live number (commit `b078372`).
 - **Speed.** About 4.5 pictures a second on CPU, 55 to 130 ms each, measured on Oak on 2026-10-11 ([TEST_LOG.md](../TEST_LOG.md)). Results lag the camera by about one picture.
 - **First run needs internet.** `ultralytics` downloads a font the first time it draws boxes.
-- `coco_detector`'s README says it reads `/image`, but its code reads `/camera/image_raw`; trust the code.
 
 ## Who's on it and what's next
 

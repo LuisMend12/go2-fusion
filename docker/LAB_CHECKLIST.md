@@ -42,7 +42,7 @@ Quick steps for connecting to the ISL lab's Unitree Go2 using the Docker setup i
 
 - **Always launch with `docker compose up --build`.** The image holds only the
   dependencies, so the build is a no-op unless one changed. Code changes never
-  need it - the repo is mounted live (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
+  need it - `src/` is mounted live (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 - **If a build looks stuck, read the step name in the output** to see what
   it's downloading. A multi-GB `nvidia-*` download means torch is pulling the
   GPU build again - the Dockerfile should install it from the CPU-only index.
