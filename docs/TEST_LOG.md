@@ -33,3 +33,4 @@ Earlier tests ran on `f85e703` (fusion before Luis's update); marked "old code" 
 3. Find out what starts `lidar_to_pointcloud` and whether its input topic is right.
 4. Confirm by eye that the dog stops cleanly when a drive source goes quiet.
 5. WSL has 7.4 GB RAM: keep builds at `-j4` / 2 workers, or raise `memory=` in `.wslconfig`.
+6. Gamepad LB deadman: no longer required. The team no longer uses an Xbox gamepad; it drives with the Oak ROS2 pad, which sends signals differently. `TODO(Max): how the Oak ROS2 pad connects (does it publish /joy into ROS, or talk to Oak directly?)`

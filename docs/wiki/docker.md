@@ -16,6 +16,7 @@ Two words to know: an **image** is the recipe-baked box, built once; a **contain
 
 Our image holds **only the dependencies** (ROS packages, PyTorch, Open3D, Julia and so on), not our code.
 When the container starts, Docker **mounts** your repo's `src/` folder inside it at `/ros2_ws/src`, so the container sees your edits instantly.
+Only `src/` (plus the Julia map viewer folder) is mounted: other repo folders such as `docs/`, `scripts/` and `host_tools/` are not inside the container.
 Then the start-up script (`entrypoint.sh`) builds the workspace with `colcon build --symlink-install` and runs the default command, `ros2 launch go2_robot_sdk robot.launch.py` (the full robot stack).
 Build output is kept in Docker volumes, so each start only rebuilds what changed.
 

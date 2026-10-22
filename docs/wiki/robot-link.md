@@ -52,8 +52,6 @@ The `external_lib/` folder holds two pieces the link needs: `aioice` (a patched 
 | Connects, then drops or refuses | The phone app or a teammate is still connected. |
 | `The aioice submodule is missing` at container start | Run `git submodule update --init --recursive` on your machine. |
 
-The lab checklist says the driver "only tries once"; the code now retries with backoff, so that line may be out of date.
-
 ## Who's on it and what's next
 
 Luis ported the reconnect and drop detection from the team fork. An unmerged branch (`fix_hz_lidar_stream`) has a faster lidar decoder (claimed about 2 Hz to 62 Hz); the plan is to port only its decoder file if lidar rate hurts mapping. TODO(owner): an owner for the link.

@@ -22,7 +22,7 @@ The lanes, from `src/go2_robot_sdk/config/twist_mux.yaml`:
 
 | Priority | Topic | Who publishes it |
 | --- | --- | --- |
-| 10 | `/cmd_vel_joy` | [Gamepad](gamepad.md), only while the safety button is held |
+| 10 | `/cmd_vel_joy` | [Gamepad](gamepad.md) via `teleop_twist_joy`, only while button 4 (LB) is held |
 | 9 | `/cmd_vel_keyboard` | [Keyboard teleop](keyboard-teleop.md) and the [RViz KeyboardTeleop panel](rviz-panels.md) |
 | 6 | `/cmd_vel_mapper` | [Auto mapper](auto-mapper.md) recovery moves (beats Nav2, loses to people) |
 | 5 | `/cmd_vel` | [Nav2](nav2.md), and anything else publishing plain `cmd_vel` |
@@ -59,7 +59,6 @@ Both the gamepad and the keyboard tools had this bug, and both were fixed to pub
 
 - **A lane that never goes quiet** blocks everything below it (the idle-zeros bug above, found on the robot 2026-10-11).
 - **Shared lanes** make sources fight. Give each source its own.
-- **Docs out of date:** the `/cmd_vel_mapper` lane (priority 6) is in the config but missing from the tables in AGENTS.md, CONTRIBUTING.md and docs/FUSION.md.
 
 ## Who's on it and what's next
 

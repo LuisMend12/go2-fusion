@@ -27,7 +27,7 @@ Over Wi-Fi, on `master` plus the keyboard fix branch:
 - **Failed, then fixed:** on old code Oak **kept walking and hit a wall**, because the driver dropped every stop command. On new code the stop arrived. Both keyboard tools sent stop commands nonstop and blocked Nav2; fixed.
 - **Partial:** keyboard driving worked but "really isn't that good".
 - **Failed:** a Nav2 goal ("starting point in lethal space": the lidar saw Oak's own body as an obstacle). A fix is in; retest pending.
-- **Not run:** gamepad (no Xbox-style pad in the lab), map click-to-walk, object navigation to a chair, sit and stand, the auto mapper, text-to-speech, the AI agent.
+- **Not run:** gamepad (no Xbox-style pad in the lab; the team now uses the Oak ROS2 pad, so this test is no longer needed), map click-to-walk, object navigation to a chair, sit and stand, the auto mapper, text-to-speech, the AI agent.
 
 ## Open issues (from the log)
 
@@ -36,6 +36,7 @@ Over Wi-Fi, on `master` plus the keyboard fix branch:
 3. Find out what starts `lidar_to_pointcloud` and whether its input topic is right.
 4. Confirm by eye that Oak stops cleanly when a drive source goes quiet.
 5. WSL had 7.4 GB of RAM: keep builds at `-j4` and 2 workers, or raise `memory=` in `.wslconfig`.
+6. Gamepad LB test: no longer required; the team uses the Oak ROS2 pad. TODO(Max): how the Oak ROS2 pad connects (does it publish /joy into ROS, or talk to Oak directly?)
 
 ## Connects to
 
@@ -46,7 +47,6 @@ Over Wi-Fi, on `master` plus the keyboard fix branch:
 ## How it breaks
 
 - **It goes stale.** The last recorded session is 2026-10-11. Luis's auto mapper work and later fixes have no logged robot session yet. TODO(owner): add sessions since then.
-- **Other records disagree with it.** docs/FUSION.md follow-up 4 still says "Nothing here was tested on the robot", which the 2026-10-11 session partly answered.
 
 ## How to add a session
 

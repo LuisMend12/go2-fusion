@@ -42,7 +42,7 @@ Part of: [Lab setup](lab-setup.md)
 | --- | --- |
 | RViz opens, lidar and camera data appear | Connected |
 | `Connection error when requesting .../con_notify` | Cannot reach the dog: check the network (step 1) |
-| Same error, but the ping works | The dog was not ready yet. The driver retries on its own; or run `docker compose restart unitree_ros` |
+| Same error, but the ping works | The dog was not ready yet. The driver retries on its own, waiting 5 s, then 10 s, doubling up to 60 s between tries; or run `docker compose restart unitree_ros` |
 | RSA or key error during the handshake | Firmware 1.1.15+: needs `ROBOT_AES_KEY` |
 | Connects, then drops or refuses | The phone app or another laptop is still connected (step 2) |
 | Camera works but lidar and odometry go silent | A data stall; the driver reconnects after 5 s. If not, `docker compose up -d --force-recreate` |

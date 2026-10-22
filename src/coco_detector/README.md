@@ -15,7 +15,7 @@ The chief virtue of this package is the simplicity of the codebase and use of st
 
 ## Packages
 
-coco_detector: package containing coco_detector_node for listening on ROS2 topic /image and publishing ROS2 Detection2DArray message on topic /detected_objects. Also (by default) publishes Image (with labels and bounding boxes) message on topic /annotated_image. The object detection is performed by PyTorch using MobileNet.
+coco_detector: package containing coco_detector_node for listening on ROS2 topic /camera/image_raw (the Go2 driver's camera topic) and publishing ROS2 Detection2DArray message on topic /detected_objects. Also (by default) publishes Image (with labels and bounding boxes) message on topic /annotated_image. The object detection is performed by PyTorch using MobileNet.
 
 ### Tested Hardware
 
@@ -59,9 +59,9 @@ source ./install/setup.bash
 
 ## Verify Install
 
-Launch a camera stream:
+Launch a camera stream (on Oak, the Go2 driver already publishes /camera/image_raw):
 ```
-ros2 run image_tools cam2image
+ros2 run image_tools cam2image --ros-args -r /image:=/camera/image_raw
 ```
 
 On another terminal enter:
@@ -111,7 +111,7 @@ Workstation (run each command in seperate terminals):
 
 ```ros2 run image_transport republish compressed raw --ros-args -r /in/compressed:=/charlie/compressed -r /out:=/server/image```
 
-```ros2 run coco_detector coco_detector_node --ros-args -r /image:=/server/image```
+```ros2 run coco_detector coco_detector_node --ros-args -r /camera/image_raw:=/server/image```
 
 I have relabelled topic names for clarity and keeping the image topics on the different machines seperate. Compression is not necessary, but I have poor performance on my network without compression.
 

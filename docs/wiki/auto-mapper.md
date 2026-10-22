@@ -46,7 +46,7 @@ From the package README and Luis's commits (Oct 14-19):
 - **Waits for fresh data.** After every scan or move it waits up to 20 s for newer `/scan`, `/point_cloud2`, `/map`, costmap and TF. If they don't come, exploration stays stopped until Scan is pressed.
 - **The 3D cloud never forgets** moved objects; neither SLAM nor the 3D map is cleared during recovery.
 - **Big maps** make each step slower, because the whole map is rescanned every cycle.
-- The README's Docker command uses a fixed container name (`docker-unitree_ros-1`) and also shows a non-Docker WSL run; the team rule is to run everything through `docker compose` (AGENTS.md). [FUSION.md](../FUSION.md) and AGENTS.md list the twist_mux inputs without `/cmd_vel_mapper`.
+- The README's Docker command uses a fixed container name (`docker-unitree_ros-1`) and also shows a non-Docker WSL run; the team rule is to run everything through `docker compose` (AGENTS.md).
 
 ## Who's on it and what's next
 
