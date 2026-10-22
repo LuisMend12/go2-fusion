@@ -52,7 +52,7 @@ On Windows from PowerShell, add `-f docker-compose.windows.yml` after `docker co
 - `docker-compose.gpu.yml` + `Dockerfile.gpu` - optional, on top of the Windows file, for an NVIDIA GPU: YOLO runs on CUDA and RViz draws on the GPU.
 - `mac/` - the Mac setup (see `macos_setup.md`).
 - `entrypoint.sh`, `dev_aliases.sh` - start-up build and the shortcuts above.
-- `LAB_CHECKLIST.md` - see [Lab checklist](lab-checklist.md).
+- The lab steps that used to sit here now live on the [Lab checklist](lab-checklist.md) page.
 - `../requirements.txt` - Python libraries. ROS libraries go in each package's `package.xml` instead.
 
 ## Connects to
