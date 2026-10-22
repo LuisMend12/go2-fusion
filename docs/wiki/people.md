@@ -54,6 +54,12 @@ Part of: [Team](team.md)
 - **Current work:** YOLO object detection that remembers objects on the map, to make mapping rooms easier (pull request #11). Also open: a navigation safety fix that stops on stale sensors (pull request #10).
 - **Next:** TODO(Max).
 
+## How we work together
+
+- **Claim your work.** Tell your agent what you're starting; it opens or finds the issue, tags the page, and assigns you, so your name shows on the map.
+- **Say what each commit does.** One short sentence, starting with the part of Oak it touches: `Auto mapper: skip frontiers it can't reach`. Your branch's messages show on your People tab, so they tell the team what you're on.
+- **Ask for review.** A pull request with Who, What, Why, Before and After posts to #feature-revisions; one teammate approves before it reaches `master`. Full steps: [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
 ## People Oak builds on
 
 - **Riley Francis** wrote [ROS2-LLM-Nav](https://github.com/RileyFrancis/ROS2-LLM-Nav): the YOLO detector, [Object navigation](object-navigation.md), the first [LLM agent](llm-agent.md) and the speech-to-text tool. See [Decisions](decisions.md).

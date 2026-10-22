@@ -75,5 +75,6 @@ The team docs are a wiki graph: `README.md` is the center page "Oak", hub pages 
 
 - Never commit to `master`. Branch from the latest master: `git fetch && git switch -c feat/<short-name> origin/master`.
 - Your own branches are personal sandboxes: commit and push to them freely, no review needed.
+- Commit messages: one short sentence that says exactly what changed, starting with the part of Oak it touches, e.g. `Auto mapper: skip frontiers it can't reach`. Never `fix`, `wip` or `updates`. Many commits before a push are fine; each still says what it did. The pull request then explains Who, What, Why, Before and After.
 - Keep branches small (one feature or fix). Before opening a PR: `git fetch && git rebase origin/master`.
 - Only merging into `master` needs review: a GitHub pull request with one teammate's approval and green automatic checks. Don't push to `master` directly.

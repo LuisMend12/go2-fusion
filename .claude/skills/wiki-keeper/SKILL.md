@@ -26,6 +26,10 @@ So the wiki graph shows who is working on what:
 
 If `gh` is not signed in, tell the human the exact commands instead of skipping this.
 
+## Committing
+
+Write every commit message as one short sentence that says exactly what changed, starting with the part of Oak it touches (`Auto mapper: skip frontiers it can't reach`). Never `fix`, `wip` or `updates`. The wiki shows these messages next to each person's branch, so they are how teammates see what you're working on.
+
 ## Before opening a pull request (or whenever code changed)
 
 1. `git fetch origin`, then run `python3 scripts/wiki/check_wiki.py` (it compares against origin/master and includes uncommitted work).

@@ -2,6 +2,8 @@
 
 Welcome aboard! Oak is our **Unitree Go2**, a lower-cost robot dog that normally walks wherever its hand remote tells it. We are **Team 48**, five students teaching Oak to find its own way. This repo is all of Oak's software, built with **ROS 2 Humble** (a toolkit where small programs, called *nodes*, pass data on named channels, called *topics*).
 
+**Browse the live wiki:** [maxhawksby.github.io/go2-fusion](https://maxhawksby.github.io/go2-fusion/) - the map of every page, who is working on what, and a way to ask questions. Nothing to install.
+
 You do not need any robotics background to start. This page is the center of our wiki: read it top to bottom, follow the links that interest you, and within half an hour you can be helping. Oak grows out of the open-source [go2_ros2_sdk](https://github.com/abizovnuralem/go2_ros2_sdk) project; go there for upstream support.
 
 ## Why we're building it
@@ -52,7 +54,7 @@ graph LR
 
 **You need:** a laptop with Docker Desktop and about 16 GB of RAM. Windows users also need WSL2 (Linux inside Windows). Macs work too. You do **not** need the robot.
 
-**Open the team wiki first.** It shows every page, a map of how they connect, and who is working on what. It runs on your laptop, outside Docker, and needs only [Node.js](https://nodejs.org/) 18+ and Python 3.8+. From the repo folder:
+**Open the team wiki first.** The quickest way is the [live wiki](https://maxhawksby.github.io/go2-fusion/) in your browser. To edit pages and see your changes instantly, run it on your laptop instead. It runs outside Docker, and needs only [Node.js](https://nodejs.org/) 18+ and Python 3.8+. From the repo folder:
 ```shell
 npm install    # once
 npm run wiki   # opens http://localhost:4410 and reloads when a page changes
