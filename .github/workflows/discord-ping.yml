@@ -1,11 +1,16 @@
-# Posts to the team Discord when someone asks a wiki question (an issue
-# labelled "question") or a pull request asks for review.
+# Posts to the team Discord when a pull request asks for review (Who, What,
+# Why, Before, After from the pull request template, to #feature-revisions)
+# or someone asks a wiki question (an issue labelled "question").
 # Code: scripts/wiki/discord_ping.py. No AI, no cost.
 #
-# One-time setup: create a Discord webhook (channel > Edit Channel >
-# Integrations > Webhooks > New Webhook > Copy URL) and save it as the repo
-# secret DISCORD_WEBHOOK_URL (Settings > Secrets and variables > Actions).
-# Until then this workflow logs "Discord not set up yet" and passes.
+# One-time setup: create a Discord webhook per channel (channel > Edit
+# Channel > Integrations > Webhooks > New Webhook > Copy URL) and save it as
+# a repo secret (Settings > Secrets and variables > Actions):
+#   DISCORD_REVIEW_WEBHOOK_URL     #feature-revisions (review requests)
+#   DISCORD_QUESTIONS_WEBHOOK_URL  questions channel (optional; without it
+#                                  questions go to the review channel)
+# The older DISCORD_WEBHOOK_URL still works as a last fallback. With no
+# secret set this workflow logs "Discord not set up yet" and passes.
 #
 # Pull requests use pull_request_target so pull requests from forks can read
 # the secret. It runs this workflow from master and never checks out or runs
@@ -16,7 +21,7 @@ on:
   issues:
     types: [opened, labeled]
   pull_request_target:
-    types: [review_requested, ready_for_review]
+    types: [opened, review_requested, ready_for_review]
 
 permissions:
   contents: read
@@ -42,5 +47,8 @@ jobs:
         run: python3 scripts/wiki/build_graph.py
       - name: Post to Discord
         env:
+          DISCORD_REVIEW_WEBHOOK_URL: ${{ secrets.DISCORD_REVIEW_WEBHOOK_URL }}
+          DISCORD_QUESTIONS_WEBHOOK_URL: ${{ secrets.DISCORD_QUESTIONS_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # re-reads reviewers on "opened"
         run: python3 scripts/wiki/discord_ping.py

@@ -59,7 +59,16 @@ A comment from someone other than the asker marks the question answered on the s
 
 ## Asking for review
 
-Open the pull request (`gh pr create`) and request a teammate (`gh pr edit <n> --add-reviewer <login>`; logins are in `docs/team.yml`). Label nothing extra: the site shows the review request and Discord pings the reviewer and the page owners.
+Open the pull request (`gh pr create`) and fill the template in `.github/pull_request_template.md`, a line or two each in plain English:
+
+- **Who**: your name, and who should review.
+- **What**: what the change does, in one sentence.
+- **Why**: why Oak or the team needs it.
+- **Before** and **After**: what happened before, what happens now.
+- **How to test**: steps a teammate can follow.
+- **Wiki**: the page you updated, or `wiki: no change needed - <reason>` on its own line.
+
+Request a teammate (`gh pr create --reviewer <login>` or `gh pr edit <n> --add-reviewer <login>`; logins are in `docs/team.yml`). Label nothing extra: the site shows the review request, and the post to Discord #feature-revisions (Who, What, Why, Before, After, wiki pages, the link, an @mention of the reviewer) happens automatically. Drafts post when marked ready for review.
 
 ## What the checker checks
 

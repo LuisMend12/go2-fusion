@@ -10,6 +10,7 @@ import math
 import os
 import sys
 import unittest
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -227,10 +228,129 @@ GRAPH = {
 }
 
 
+def question_text(ev):
+    kind, payload = dp.build_message("issues", ev, GRAPH)
+    assert kind == "question"
+    return payload["content"]
+
+
+FILLED = """\
+<!-- Answer each part in a line or two. -->
+
+## Who
+<!-- Your name -->
+Max, review: Luis
+
+## What
+Remember objects YOLO has seen.
+
+## Why
+Mapping a room is easier when Oak knows where the chairs are.
+
+## Before
+Every detection was forgotten after one frame.
+
+## After
+Objects stay in a local memory with their map position.
+
+## How to test
+Run the mock camera and check /objects.
+
+## Wiki
+Updated object-detection.
+"""
+
+PARTLY = """\
+## Who
+<!-- Your name -->
+
+## What
+Faster frontier search.
+
+## Why
+<!-- Why does Oak need it? -->
+
+**Before:** the explorer froze on big maps.
+After: it picks a goal in under a second.
+"""
+
+EMPTY_TEMPLATE = Path(HERE).parents[2].joinpath(".github", "pull_request_template.md").read_text(encoding="utf-8") \
+    if Path(HERE).parents[2].joinpath(".github", "pull_request_template.md").exists() else "## Who\n<!-- x -->\n"
+
+PR_SKILL = """\
+<!-- via /pr -->
+Oak now remembers objects it has seen, so room maps can show where things are.
+
+- Before: each detection vanished after one frame. After: objects stay in a local memory.
+- Before: no way to ask what Oak saw. After: /objects lists them.
+
+Watch: nothing risky
+Ask: is a 30 second forget time right?
+
+<details><summary>How it works (engineer detail)</summary>
+
+**The pieces** - memory node - keeps objects
+</details>
+
+wiki: no change needed - docs only
+"""
+
+
+def pr_event(action="opened", body=FILLED, reviewers=("LuisMend12",), **extra):
+    pr = {"number": 12, "title": "Object memory", "html_url": "https://github.com/x/y/pull/12",
+          "user": {"login": "maxhawksby"}, "labels": [], "body": body, "draft": False,
+          "requested_reviewers": [{"login": r} for r in reviewers],
+          "created_at": "2026-10-20T09:00:00Z", "updated_at": "2026-10-20T10:00:00Z"}
+    pr.update(extra)
+    return {"action": action, "pull_request": pr}
+
+
+def fields(payload):
+    return {f["name"]: f["value"] for f in payload["embeds"][0]["fields"]}
+
+
+class TestTemplate(unittest.TestCase):
+    def test_filled(self):
+        sec = dp.parse_template(FILLED)
+        self.assertEqual(sec["who"], "Max, review: Luis")
+        self.assertEqual(sec["what"], "Remember objects YOLO has seen.")
+        self.assertEqual(sec["why"], "Mapping a room is easier when Oak knows where the chairs are.")
+        self.assertEqual(sec["before"], "Every detection was forgotten after one frame.")
+        self.assertEqual(sec["after"], "Objects stay in a local memory with their map position.")
+        self.assertEqual(sec["how to test"], "Run the mock camera and check /objects.")
+        self.assertEqual(sec["wiki"], "Updated object-detection.")
+
+    def test_partly_filled(self):
+        sec = dp.parse_template(PARTLY)
+        self.assertNotIn("who", sec)  # only a prompt comment
+        self.assertNotIn("why", sec)
+        self.assertEqual(sec["what"], "Faster frontier search.")
+        self.assertEqual(sec["before"], "the explorer froze on big maps.")
+        self.assertEqual(sec["after"], "it picks a goal in under a second.")
+
+    def test_empty_template(self):
+        sec = dp.parse_template(EMPTY_TEMPLATE)
+        self.assertEqual({k: v for k, v in sec.items()}, {})
+        self.assertEqual(dp.parse_template(""), {})
+        self.assertEqual(dp.parse_template(None), {})
+
+    def test_pr_skill_three_layers(self):
+        sec = dp.parse_template(PR_SKILL)
+        self.assertEqual(sec["_first"], "Oak now remembers objects it has seen, so room maps can show where things are.")
+        self.assertEqual(sec["before"], "- each detection vanished after one frame.\n- no way to ask what Oak saw.")
+        self.assertEqual(sec["after"], "- objects stay in a local memory.\n- /objects lists them.")
+        self.assertEqual(sec["wiki"], "no change needed - docs only")
+        self.assertNotIn("why", sec)
+
+    def test_sentence_starting_with_a_section_word_is_not_a_heading(self):
+        sec = dp.parse_template("## What\nWhat a change.\nWhy not.\n")
+        self.assertEqual(sec["what"], "What a change.\nWhy not.")
+
+
 class TestDiscord(unittest.TestCase):
     def test_question_mentions_owner_with_discord_id(self):
         ev = {"action": "opened", "issue": issue(["question", "wiki:slam"], user="maxhawksby")}
-        text = dp.build_message("issues", ev, GRAPH)
+        text = question_text(ev)
         self.assertIn("**Question** from Max on [SLAM](<https://github.com/maxhawksby/go2-fusion/blob/master/"
                       "docs/wiki/slam.md>): How does SLAM localize?", text)
         self.assertIn("https://github.com/x/y/issues/7", text)
@@ -238,7 +358,7 @@ class TestDiscord(unittest.TestCase):
 
     def test_question_falls_back_to_last_changer_by_name(self):
         ev = {"action": "opened", "issue": issue(["question", "wiki:voice"], user="newbie")}
-        text = dp.build_message("issues", ev, GRAPH)
+        text = question_text(ev)
         self.assertIn("from newbie", text)
         self.assertTrue(text.endswith("Can you help? Max"))
 
@@ -248,30 +368,105 @@ class TestDiscord(unittest.TestCase):
                                                       "issue": echo}, GRAPH))
         self.assertIsNone(dp.build_message("issues", {"action": "labeled", "label": {"name": "wiki:slam"},
                                                       "issue": issue(["question", "wiki:slam"])}, GRAPH))
-        later = dp.build_message("issues", {"action": "labeled", "label": {"name": "question"},
-                                            "issue": issue(["question", "wiki:slam"])}, GRAPH)
+        later = question_text({"action": "labeled", "label": {"name": "question"},
+                               "issue": issue(["question", "wiki:slam"])})
         self.assertIn("**Question**", later)
         self.assertIsNone(dp.build_message("issues", {"action": "opened", "issue": issue(["wiki:slam"])}, GRAPH))
 
-    def test_review_request(self):
-        ev = {"action": "review_requested", "requested_reviewer": {"login": "LuisMend12"},
-              "pull_request": {"number": 12, "title": "Tune SLAM", "html_url": "https://github.com/x/y/pull/12",
-                               "user": {"login": "maxhawksby"}, "labels": []}}
-        text = dp.build_message("pull_request_target", ev, GRAPH)
-        self.assertIn("**Review requested** by Max on [SLAM]", text)
-        self.assertIn("Reviewer: <@123456789>", text)
-        self.assertNotIn("Page owners", text)  # Luis is already the reviewer, Max is the author
+    def test_review_post_from_filled_template(self):
+        kind, payload = dp.build_message("pull_request_target", pr_event(), GRAPH)
+        self.assertEqual(kind, "review")
+        self.assertEqual(payload["content"], "**Review requested** from <@123456789>: <https://github.com/x/y/pull/12>")
+        f = fields(payload)
+        self.assertEqual(f["Who"], "Max (@maxhawksby)\nMax, review: Luis")
+        self.assertEqual(f["What"], "**Object memory**\nRemember objects YOLO has seen.")
+        self.assertEqual(f["Why"], "Mapping a room is easier when Oak knows where the chairs are.")
+        self.assertEqual(f["Before"], "Every detection was forgotten after one frame.")
+        self.assertEqual(f["After"], "Objects stay in a local memory with their map position.")
+        self.assertEqual(f["Wiki pages"], "[SLAM](https://github.com/maxhawksby/go2-fusion/blob/master/docs/wiki/slam.md)")
+        self.assertEqual(f["Review it"], "https://github.com/x/y/pull/12")
+        embed = payload["embeds"][0]
+        self.assertEqual(embed["color"], 0xFF4D5E)  # Max's color
+        self.assertEqual(embed["url"], "https://github.com/x/y/pull/12")
+        self.assertNotIn("footer", embed)
+
+    def test_review_post_unfilled_falls_back_to_first_paragraph(self):
+        _, payload = dp.build_message("pull_request_target", pr_event(body=PR_SKILL, number=99), GRAPH)
+        f = fields(payload)
+        self.assertEqual(f["Why"], "Oak now remembers objects it has seen, so room maps can show where things are.")
+        self.assertTrue(f["Before"].startswith("- each detection vanished"))
+        self.assertEqual(f["Wiki pages"], "no change needed - docs only")
+        self.assertIn("first paragraph", payload["embeds"][0]["footer"]["text"])
+
+        _, payload = dp.build_message("pull_request_target", pr_event(body=EMPTY_TEMPLATE, number=99), GRAPH)
+        f = fields(payload)
+        self.assertEqual((f["Why"], f["Before"], f["After"], f["Wiki pages"]),
+                         ("not filled in", "not filled in", "not filled in", "none listed"))
+        self.assertEqual(payload["embeds"][0]["footer"]["text"], "Template not filled in.")
+
+    def test_review_without_reviewer_mentions_page_owners(self):
+        ev = pr_event(reviewers=(), user={"login": "newbie"})
+        _, payload = dp.build_message("pull_request_target", ev, GRAPH)
+        self.assertTrue(payload["content"].startswith("**Review requested** - page owners: <@123456789>"))
+        self.assertEqual(fields(payload)["Who"], "@newbie\nMax, review: Luis")
+        self.assertNotIn("color", payload["embeds"][0])
+
+    def test_one_post_per_review_request(self):
+        post = lambda ev: dp.build_message("pull_request_target", ev, GRAPH)  # noqa: E731
+        self.assertIsNone(post(pr_event(draft=True)))  # drafts wait for ready_for_review
+        self.assertIsNotNone(post(pr_event("ready_for_review")))
+        # opened with reviewers: GitHub also fires review_requested seconds later
+        echo = pr_event("review_requested", updated_at="2026-10-20T09:00:03Z")
+        echo["requested_reviewer"] = {"login": "LuisMend12"}
+        self.assertIsNone(post(echo))
+        # two reviewers asked at once later: one event per reviewer, one post
+        both = ("maxhawksby", "LuisMend12")
+        first = pr_event("review_requested", reviewers=both)
+        first["requested_reviewer"] = {"login": "maxhawksby"}
+        last = pr_event("review_requested", reviewers=both)
+        last["requested_reviewer"] = {"login": "LuisMend12"}
+        self.assertIsNone(post(first))
+        self.assertIn("Max <@123456789>", post(last)[1]["content"])
+        drafted = pr_event("review_requested", draft=True)
+        drafted["requested_reviewer"] = {"login": "LuisMend12"}
+        self.assertIsNone(post(drafted))
 
     def test_other_pr_actions_ignored(self):
         self.assertIsNone(dp.build_message("pull_request", {"action": "synchronize", "pull_request": {}}, GRAPH))
 
+    def test_as_text_for_the_log(self):
+        _, payload = dp.build_message("pull_request_target", pr_event(), GRAPH)
+        text = dp.as_text(payload)
+        self.assertIn("Why: Mapping a room", text)
+        self.assertIn("Review it: https://github.com/x/y/pull/12", text)
+
+
+class TestWebhooks(unittest.TestCase):
+    def test_review_and_question_routing(self):
+        env = {"DISCORD_REVIEW_WEBHOOK_URL": "r", "DISCORD_QUESTIONS_WEBHOOK_URL": "q", "DISCORD_WEBHOOK_URL": "o"}
+        self.assertEqual(dp.webhook_for("review", env), ("DISCORD_REVIEW_WEBHOOK_URL", "r"))
+        self.assertEqual(dp.webhook_for("question", env), ("DISCORD_QUESTIONS_WEBHOOK_URL", "q"))
+
+    def test_fallbacks(self):
+        self.assertEqual(dp.webhook_for("question", {"DISCORD_REVIEW_WEBHOOK_URL": "r"}),
+                         ("DISCORD_REVIEW_WEBHOOK_URL", "r"))
+        self.assertEqual(dp.webhook_for("question", {"DISCORD_WEBHOOK_URL": "o", "DISCORD_QUESTIONS_WEBHOOK_URL": " "}),
+                         ("DISCORD_WEBHOOK_URL", "o"))
+        self.assertEqual(dp.webhook_for("review", {"DISCORD_WEBHOOK_URL": "o"}), ("DISCORD_WEBHOOK_URL", "o"))
+        self.assertEqual(dp.webhook_for("review", {"DISCORD_QUESTIONS_WEBHOOK_URL": "q"}), (None, ""))
+
     def test_no_webhook_exits_zero(self):
-        old = os.environ.pop("DISCORD_WEBHOOK_URL", None)
+        names = ["DISCORD_WEBHOOK_URL", "DISCORD_REVIEW_WEBHOOK_URL", "DISCORD_QUESTIONS_WEBHOOK_URL", "GITHUB_EVENT_NAME"]
+        old = {n: os.environ.pop(n, None) for n in names}
         try:
             self.assertEqual(dp.main(), 0)
+            os.environ["GITHUB_EVENT_NAME"] = "issues"
+            self.assertEqual(dp.main(), 0)
         finally:
-            if old is not None:
-                os.environ["DISCORD_WEBHOOK_URL"] = old
+            for n, v in old.items():
+                os.environ.pop(n, None)
+                if v is not None:
+                    os.environ[n] = v
 
 
 if __name__ == "__main__":

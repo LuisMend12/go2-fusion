@@ -65,10 +65,14 @@ One block per person: `id` (short, lowercase), `name`, `github` (login), `color`
 
 [wiki-site.yml](../../.github/workflows/wiki-site.yml) rebuilds and deploys the site to GitHub Pages on pushes to master that touch the wiki, on issue, comment and pull request changes, and every 6 hours. It always builds master.
 
-[discord-ping.yml](../../.github/workflows/discord-ping.yml) runs [discord_ping.py](discord_ping.py) when an issue gets the `question` label or a pull request asks for review. It posts who asked, which page, the title and link, and mentions the page owners (people with open work on that page, else its last changer).
+[discord-ping.yml](../../.github/workflows/discord-ping.yml) runs [discord_ping.py](discord_ping.py) on two kinds of events:
+
+- **Review requests** (a pull request opened ready for review, marked ready for review, or a reviewer requested): posts to #feature-revisions with Who (author, in their team color), What (title), Why, Before and After (read from the [pull request template](../../.github/pull_request_template.md) sections; "not filled in" when empty, with Why falling back to the description's first paragraph), the wiki pages touched and the link, and @mentions the requested reviewers (else the page owners). One post per request: a pull request opened with reviewers posts once, drafts wait until ready.
+- **Questions** (an issue labelled `question`): posts who asked, which page, the title and link, and mentions the page owners (people with open work on that page, else its last changer).
 
 One-time setup (Max):
 
-1. Create a Discord webhook (channel > Edit Channel > Integrations > Webhooks > New Webhook > Copy URL) and add it as the repo secret `DISCORD_WEBHOOK_URL` (Settings > Secrets and variables > Actions). Until then the ping logs "Discord not set up yet" and passes.
+1. Create a Discord webhook in #feature-revisions (channel > Edit Channel > Integrations > Webhooks > New Webhook > Copy URL) and add it as the repo secret `DISCORD_REVIEW_WEBHOOK_URL` (GitHub: Settings > Secrets and variables > Actions > New repository secret).
+   Optional: make a second webhook in the channel for questions and save it as `DISCORD_QUESTIONS_WEBHOOK_URL`; without it, questions post to #feature-revisions. The older `DISCORD_WEBHOOK_URL` still works as a last fallback for both. With no secret set the ping logs "Discord not set up yet" and passes.
 2. Fill each person's `discord_id` in `docs/team.yml` (Discord: Settings > Advanced > Developer Mode on, then right-click a name > Copy User ID). Without it, pings name the person instead of @mentioning them.
 3. Enable Pages: Settings > Pages > Source: GitHub Actions.
