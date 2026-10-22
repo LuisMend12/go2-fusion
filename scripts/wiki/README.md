@@ -18,6 +18,8 @@ GITHUB_TOKEN=$(gh auth token) GITHUB_REPOSITORY=maxhawksby/go2-fusion python3 sc
 
 It only reads from GitHub. Tests: `python3 -m unittest discover -s scripts/wiki/tests`.
 
+Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Add `?person=<id>` to the URL to start with a teammate's work highlighted.
+
 ## Add a page
 
 Create `docs/wiki/<slug>.md` (lowercase, words joined by `-`) starting with:
