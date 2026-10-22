@@ -1,0 +1,57 @@
+# Builds the Oak wiki graph (scripts/wiki/build_graph.py) and deploys site/
+# to GitHub Pages.
+#
+# One-time setup: GitHub Pages must be enabled for this repo with
+#   Settings > Pages > Source: GitHub Actions
+# Until then the deploy step fails; the build step still checks the wiki.
+#
+# Open issues labelled "wiki:<slug>" show up as active work on that page.
+name: Wiki site
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - README.md
+      - docs/wiki/**
+      - scripts/wiki/**
+      - site/**
+      - .github/workflows/wiki-site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: wiki-site
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build graph.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/wiki/build_graph.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

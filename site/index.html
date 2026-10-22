@@ -1,0 +1,55 @@
+<!doctype html>
+<!--
+  Oak wiki graph. Build the data and serve it locally:
+    python3 scripts/wiki/build_graph.py && python3 -m http.server -d site 8765
+  then open http://localhost:8765/ . See scripts/wiki/README.md.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oak Wiki</title>
+  <meta name="description" content="The Oak robot dog team wiki, as a 3D graph.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="graph" aria-label="3D graph of the wiki"></div>
+
+  <header class="topbar">
+    <button id="home" class="brand" title="Back to Oak">
+      <span class="brand-dot"></span>
+      <span>Oak <em>wiki</em></span>
+    </button>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search pages" autocomplete="off" aria-label="Search pages">
+      <ul id="results" role="listbox" hidden></ul>
+    </div>
+    <button id="back" class="ghost" title="Back to Oak">Back to Oak</button>
+  </header>
+
+  <nav id="legend" aria-label="Hubs"></nav>
+
+  <aside id="panel" hidden>
+    <div class="panel-head">
+      <nav id="crumbs" aria-label="Breadcrumb"></nav>
+      <button id="close" class="icon" aria-label="Close panel">&times;</button>
+    </div>
+    <div id="work"></div>
+    <article id="content" class="md"></article>
+    <footer class="panel-foot">
+      <div id="code"></div>
+      <a id="github" target="_blank" rel="noopener">View on GitHub</a>
+    </footer>
+  </aside>
+
+  <div id="status">Loading the wiki...</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three-spritetext@1.9.0/dist/three-spritetext.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
