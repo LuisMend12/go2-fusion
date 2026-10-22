@@ -4,7 +4,8 @@
   "use strict";
 
   const REPO = "https://github.com/maxhawksby/go2-fusion";
-  const BRANCH = "master";
+  let BRANCH = "master";
+  let PUBLISHED = true;
   const HUB_COLORS = {
     driving: "#ff9f5a",
     driver: "#5aa8ff",
@@ -31,7 +32,11 @@
       if (!r.ok) throw new Error("graph.json not found");
       return r.json();
     })
-    .then(start)
+    .then((data) => {
+      BRANCH = data.branch || BRANCH;
+      PUBLISHED = data.published !== false;
+      start(data);
+    })
     .catch((err) => {
       status.textContent = "Could not load graph.json. Run: python3 scripts/wiki/build_graph.py (" + err.message + ")";
     });
@@ -348,7 +353,17 @@
 
     $("code").textContent = (n.code || []).join("  ");
     $("code").title = (n.code || []).join("\n");
-    $("github").href = REPO + "/blob/" + BRANCH + "/" + n.path;
+    const gh = $("github");
+    if (PUBLISHED) {
+      gh.href = REPO + "/blob/" + BRANCH + "/" + n.path;
+      gh.textContent = "View on GitHub";
+      gh.removeAttribute("aria-disabled");
+    } else {
+      gh.removeAttribute("href");
+      gh.textContent = "Not on GitHub yet";
+      gh.setAttribute("aria-disabled", "true");
+      gh.title = "This page is on the local branch " + BRANCH + " and has not been pushed.";
+    }
   }
 
   // Resolve a link relative to the page's own folder, like GitHub does.

@@ -17,6 +17,7 @@ Standard library only.
 
 import json
 import os
+import subprocess
 import re
 import sys
 import urllib.error
@@ -200,6 +201,24 @@ def fetch_active_work(pages):
     return work
 
 
+def github_branch():
+    """Branch the "View on GitHub" links point at, and whether GitHub has it yet.
+
+    In the Pages workflow this is the pushed branch. Locally it is the current
+    branch, and links stay off until that branch exists on origin, so a preview
+    never sends people to a 404.
+    """
+    if os.environ.get("GITHUB_REF_NAME"):
+        return os.environ["GITHUB_REF_NAME"], True
+
+    def git(*args):
+        r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    branch = git("rev-parse", "--abbrev-ref", "HEAD") or "master"
+    return branch, bool(git("rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}"))
+
+
 def main():
     if not WIKI.is_dir():
         fail(f"no wiki folder at {rel(WIKI)}.")
@@ -225,7 +244,9 @@ def main():
         nodes.append(node)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps({"nodes": nodes, "edges": edges}, indent=1), encoding="utf-8")
+    branch, published = github_branch()
+    OUT.write_text(json.dumps({"branch": branch, "published": published, "nodes": nodes, "edges": edges}, indent=1),
+                   encoding="utf-8")
     links = sum(1 for e in edges if e["kind"] == "link")
     print(f"Wrote {rel(OUT)}: {len(nodes)} pages, {len(edges) - links} parent edges, {links} cross links, "
           f"{sum(len(v) for v in work.values())} active issues.")
