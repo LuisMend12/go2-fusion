@@ -1427,5 +1427,38 @@
     "oak"
    ]
   }
+ ],
+ "branches": [
+  {
+   "name": "luis/frontier-backoff",
+   "person": "luis",
+   "author": "LuisMend12",
+   "last_commit": {
+    "sha": "c4d2e19",
+    "date": "2026-10-22T06:30:00Z",
+    "message": "(sample) Auto mapper: back off from frontiers it cannot reach"
+   },
+   "ahead": 3,
+   "pages": [
+    "auto-mapper",
+    "nav2"
+   ],
+   "pr": null
+  },
+  {
+   "name": "adib/qwen-small",
+   "person": "adib",
+   "author": "AdibRouf",
+   "last_commit": {
+    "sha": "d81a0f3",
+    "date": "2026-10-21T15:10:00Z",
+    "message": "(sample) LLM agent: try the 1.5B Qwen model"
+   },
+   "ahead": 1,
+   "pages": [
+    "llm-agent"
+   ],
+   "pr": null
+  }
  ]
 }

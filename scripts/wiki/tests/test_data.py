@@ -207,6 +207,66 @@ class TestQuestions(unittest.TestCase):
         self.assertTrue(bg.work_from_pr(pr, [], pages, PEOPLE)["review_requested"])
 
 
+class TestBranches(unittest.TestCase):
+    PAGES = {
+        "oak": {"file": bg.ROOT / "README.md", "code": []},
+        "slam": {"file": bg.WIKI / "slam.md", "code": ["src/slam/**"]},
+        "voice": {"file": bg.WIKI / "voice.md", "code": ["src/voice/**"]},
+        "lidar": {"file": bg.WIKI / "lidar.md", "code": ["src/lidar/**"]},
+    }
+    NOW = bg.parse_date("2026-10-22T12:00:00Z")
+    LUIS = "128239393+LuisMend12@users.noreply.github.com"
+
+    def ref(self, name, date, author="LuisM23", email=LUIS, message="Lidar: smooth scans"):
+        return {"name": name, "sha": "abc1234def", "date": date, "author": author, "email": email, "message": message}
+
+    def run_branches(self, refs, info, work=()):
+        return bg.active_branches(refs, self.PAGES, PEOPLE, list(work), self.NOW, info)
+
+    def test_fourteen_day_cutoff(self):
+        refs = [self.ref("fresh", "2026-10-22T10:00:00Z"),
+                self.ref("edge", "2026-10-08T12:00:00+00:00"),       # exactly 14 days: kept
+                self.ref("stale", "2026-10-08T11:59:00Z"),            # a minute older: dropped
+                self.ref("other-zone", "2026-10-21T20:00:00-04:00")]
+        got = self.run_branches(refs, lambda name: (1, []))
+        self.assertEqual([b["name"] for b in got], ["fresh", "other-zone", "edge"])  # newest first
+
+    def test_merged_branches_are_left_out(self):
+        got = self.run_branches([self.ref("merged", "2026-10-22T10:00:00Z")], lambda name: (0, ["src/slam/a.py"]))
+        self.assertEqual(got, [])
+
+    def test_files_to_pages_person_and_pr(self):
+        files = {
+            "luis/lidar": ["src/lidar/scan.py", "docs/wiki/slam.md", "notes.txt"],
+            "max/old-layout": ["voice/tts.py", "README.md"],   # pre-src/ layout lands on today's page
+        }
+        refs = [self.ref("luis/lidar", "2026-10-22T09:00:00Z"),
+                self.ref("max/old-layout", "2026-10-20T09:00:00Z", author="Max Hawksby", email="max@example.com")]
+        work = [{"kind": "pr", "number": 12, "url": "https://github.com/x/y/pull/12", "branch": "luis/lidar"},
+                {"kind": "issue", "number": 13, "url": "u", "branch": None}]
+        got = {b["name"]: b for b in self.run_branches(refs, lambda name: (len(files[name]), files[name]), work)}
+        luis, max_ = got["luis/lidar"], got["max/old-layout"]
+        self.assertEqual((luis["person"], luis["ahead"], luis["pages"]), ("luis", 3, ["lidar", "slam"]))
+        self.assertEqual(luis["pr"], {"number": 12, "url": "https://github.com/x/y/pull/12"})
+        self.assertEqual(luis["last_commit"], {"sha": "abc1234def", "date": "2026-10-22T09:00:00Z",
+                                               "message": "Lidar: smooth scans"})
+        self.assertEqual((max_["person"], max_["pages"], max_["pr"]), ("max", ["oak", "voice"], None))
+
+    def test_unknown_author_has_no_person(self):
+        got = self.run_branches([self.ref("x", "2026-10-22T09:00:00Z", author="Stranger", email="s@example.com")],
+                                lambda name: (1, []))
+        self.assertIsNone(got[0]["person"])
+        self.assertEqual(got[0]["author"], "Stranger")
+
+    def test_pr_head_branch_only_from_this_repo(self):
+        pages = {"slam": {"file": bg.WIKI / "slam.md", "code": ["src/slam/**"]}}
+        pr = {"number": 3, "user": {"login": "maxhawksby"}, "labels": [], "title": "t", "html_url": "u",
+              "head": {"ref": "feat/x", "repo": {"full_name": "maxhawksby/go2-fusion"}}}
+        self.assertEqual(bg.work_from_pr(pr, [], pages, PEOPLE, "maxhawksby/go2-fusion")["branch"], "feat/x")
+        pr["head"]["repo"] = {"full_name": "someone/go2-fusion"}
+        self.assertIsNone(bg.work_from_pr(pr, [], pages, PEOPLE, "maxhawksby/go2-fusion")["branch"])
+
+
 class TestSummary(unittest.TestCase):
     def test_first_sentence_plain_text(self):
         md = "# SLAM\n\nPart of: [Maps](maps.md)\n\n`slam_toolbox` builds a **2D map** from [/scan](x.md). More.\n"

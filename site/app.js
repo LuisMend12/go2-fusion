@@ -71,7 +71,7 @@
       generated_at: d.generated_at || null,
       sample: !!d.sample,
       people: arr(d.people), nodes: arr(d.nodes), edges: arr(d.edges),
-      work: arr(d.work), questions: arr(d.questions), recent: arr(d.recent),
+      work: arr(d.work), questions: arr(d.questions), recent: arr(d.recent), branches: arr(d.branches),
     };
     out.nodes.forEach((n) => {
       n.code = arr(n.code); n.markdown = n.markdown || ""; n.depth = n.depth ?? (n.id === "oak" ? 0 : 2);
@@ -79,6 +79,7 @@
     });
     out.work.forEach((w) => { w.pages = arr(w.pages); w.assignees = arr(w.assignees); });
     out.recent.forEach((r) => { r.pages = arr(r.pages); });
+    out.branches.forEach((b) => { b.pages = arr(b.pages); b.last_commit = b.last_commit || {}; });
     out.people.forEach((p) => {
       p.past = arr(p.past); p.contributed = arr(p.contributed);
       p.worked_on = arr(p.worked_on).length ? arr(p.worked_on) : [...new Set(p.past.concat(p.contributed))];
@@ -124,9 +125,11 @@
   const scopeOf = (n) => new Set(n.depth < 2 ? descendants(n.id) : [n.id]);
   const workOn = (ids) => D.work.filter((w) => w.pages.some((p) => ids.has(p)));
   const workOf = (pid) => D.work.filter((w) => w.person === pid || w.assignees.includes(pid));
+  const branchesOf = (pid) => D.branches.filter((b) => b.person === pid);
   function personPages(pid) {
     const s = new Set((people[pid] && people[pid].worked_on) || []);
     workOf(pid).forEach((w) => w.pages.forEach((p) => s.add(p)));
+    branchesOf(pid).forEach((b) => b.pages.forEach((p) => s.add(p)));
     s.delete("oak");
     return s;
   }
@@ -153,6 +156,7 @@
   const blobUrl = (path) => GH() + "/blob/" + D.branch + "/" + path;
   const codeDir = (glob) => glob.split(/[*?[]/)[0].replace(/\/+$/, "");
   const treeUrl = (glob) => GH() + "/tree/" + D.branch + "/" + codeDir(glob);
+  const branchUrl = (name) => GH() + "/tree/" + name.split("/").map(encodeURIComponent).join("/");
   const pageHash = (id, anchor) => "#" + id + (anchor ? "/" + anchor : "");
   const personHash = (pid) => "#people/" + pid;
 
@@ -510,6 +514,19 @@
           w.pages.some((x) => byId[x]) ? h("div", { class: "pv-pages" }, w.pages.map(pageBtn)) : null)))
       : h("p", { class: "pv-none" }, noGithub ? "No open work shown: this copy was built without GitHub access."
         : "No open issues or pull requests right now.")));
+
+    // Active branches: sandbox work pushed lately, before any issue or PR
+    const bs = branchesOf(p.id);
+    el.append(sec("Active branches", bs.length, bs.length
+      ? h("ul", { class: "pv-work pv-branches", style: "--c:" + p.color }, bs.map((b) => h("li", null,
+          h("div", { class: "pv-w-top" },
+            h("a", { class: "pv-branch", href: branchUrl(b.name), target: "_blank", rel: "noopener", title: "Open this branch on GitHub" }, b.name),
+            b.pr ? h("a", { class: "tag", href: b.pr.url, target: "_blank", rel: "noopener" }, "Pull request #" + b.pr.number) : null,
+            b.ahead ? h("span", { class: "tag draft" }, "ahead by " + b.ahead) : null),
+          h("div", { class: "pv-when" }, "pushed " + rel(b.last_commit.date)),
+          b.last_commit.message ? h("div", { class: "pv-msg" }, b.last_commit.message) : null,
+          b.pages.some((x) => byId[x]) ? h("div", { class: "pv-pages" }, b.pages.map(pageBtn)) : null)))
+      : h("p", { class: "pv-none" }, "No branches pushed in the last 14 days.")));
 
     // Has worked on
     const past = new Set(p.past);
