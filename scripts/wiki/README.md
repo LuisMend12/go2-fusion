@@ -10,6 +10,8 @@ python3 scripts/wiki/build_graph.py && python3 -m http.server -d site 8765
 
 Then open http://localhost:8765/. Click a node to read its page; links in the page move you through the graph.
 
+Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Add `?person=<id>` to the URL to start with a teammate's work highlighted.
+
 ## Add a page
 
 Create `docs/wiki/<slug>.md` (lowercase, words joined by `-`) starting with:
