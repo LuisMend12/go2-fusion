@@ -31,7 +31,7 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, review_requested, ready_for_review, closed]
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "17 * * * *"  # hourly safety net; events above cover most changes
   workflow_dispatch:
 
 permissions:
