@@ -15,7 +15,7 @@ Part of: [Driving](driving.md)
 The team no longer drives with an Xbox gamepad, and the LB hold-to-drive (deadman) test is no longer required.
 The team uses the **Oak ROS2 pad**, which sends its signals differently from an Xbox pad.
 
-TODO(Max): how the Oak ROS2 pad connects (does it publish /joy into ROS, or talk to Oak directly?)
+How it connects: it talks straight to Oak, like Unitree's R3-1 remote, and skips our ROS software (Max, 2026-10-22). So it never goes through the referee (twist_mux), and nothing in this repo can block or override it. The gamepad lane described below only matters if someone plugs in a pad that publishes `/joy`.
 
 The code below is unchanged, so it still describes what happens if any standard pad is plugged in and publishes `/joy`.
 
@@ -43,12 +43,12 @@ Separately, the [Go2 driver](go2-driver.md) also reads `/joy` itself: button 0 s
 ## How it breaks
 
 - **Never tested on Oak with an Xbox-style pad.** On 2026-10-11 the lab had none (see [Test log](test-log.md)). The deadman logic was tested only in Docker with simulated input. The team now uses the Oak ROS2 pad instead, so this test is no longer needed.
-- **If the Oak ROS2 pad publishes `/joy`**, its button and axis numbers may not match the Xbox numbers in `twist_mux.yaml`. Check with `ros2 topic echo /joy` before driving.
+- **The Oak ROS2 pad always wins.** It talks to Oak directly, so a person holding it can stop the dog even if our software misbehaves, and our code can't stop the pad.
 - **On Windows without WSL** there is no `/dev/input`, so the container cannot see a controller at all (see [WSL and Windows](wsl.md)).
 
 ## Who's on it and what's next
 
-TODO(owner): no one owns the gamepad lane. Next: Max to record how the Oak ROS2 pad connects (TODO above).
+TODO(owner): no one owns the gamepad lane. The Oak ROS2 pad needs no code from us.
 
 ## The code
 

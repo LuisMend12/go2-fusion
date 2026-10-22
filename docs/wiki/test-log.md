@@ -36,7 +36,7 @@ Over Wi-Fi, on `master` plus the keyboard fix branch:
 3. Find out what starts `lidar_to_pointcloud` and whether its input topic is right.
 4. Confirm by eye that Oak stops cleanly when a drive source goes quiet.
 5. WSL had 7.4 GB of RAM: keep builds at `-j4` and 2 workers, or raise `memory=` in `.wslconfig`.
-6. Gamepad LB test: no longer required; the team uses the Oak ROS2 pad. TODO(Max): how the Oak ROS2 pad connects (does it publish /joy into ROS, or talk to Oak directly?)
+6. Gamepad LB test: no longer required; the team uses the Oak ROS2 pad. The pad talks straight to Oak and skips ROS (Max, 2026-10-22).
 
 ## Connects to
 
