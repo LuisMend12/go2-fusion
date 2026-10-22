@@ -19,7 +19,7 @@ The launcher lives in [tools/oak-wiki/](../../tools/oak-wiki/) and uses only wha
 
 Checks and tests: `npm run wiki:check` runs [check_wiki.py](check_wiki.py) (add `-- --base <branch>` to compare with another branch), and `npm test` runs the Python tests plus the launcher's own tests.
 
-Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Open `#people/<id>` (for example `#people/max`) for a teammate's view: focus, open work, pages they have worked on and their recent changes, with their pages ringed on the map.
+Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Open `#people/<id>` (for example `#people/max`) for a teammate's view: focus, open work, active branches, pages they have worked on and their recent changes, with their pages ringed on the map.
 
 ## Add a page
 
@@ -42,6 +42,7 @@ One block per person: `id` (short, lowercase), `name`, `github` (login), `color`
 ## Work, questions and reviews
 
 - Working on a page: label an issue `wiki:<slug>` and assign yourself. Open pull requests show up on their own: their changed files are matched to each page's `code:` paths (and wiki files changed directly).
+- Sandbox work: any branch you push to GitHub with a commit in the last 14 days shows under "Active branches" on your tab, before there is an issue or pull request. It is matched to you by its newest commit's author, and to pages by the files it changes since it left master. Branches with nothing master lacks (already merged) are left out.
 - Questions: an issue labelled `question` and `wiki:<slug>`. It counts as answered once someone other than the asker comments, or it has the label `answered`.
 - Review: a pull request with requested reviewers (or the label `review`).
 
@@ -55,9 +56,10 @@ One block per person: `id` (short, lowercase), `name`, `github` (login), `color`
 | `people` | `docs/team.yml`: `id`, `name`, `github`, `color`, `discord_id`, `focus`, `past`; plus `contributed` (up to 8 pages whose file or `code:` paths they committed to, most commits first, Oak left out) and `worked_on` (`past` then `contributed`, no repeats) |
 | `nodes` | one per page: `id`, `title`, `parent`, `hub`, `depth`, `code`, `path`, `markdown`, `summary`, `x`, `y` (fixed layout: Oak at 0,0, hubs on a ring, pages fanned out from their hub; same input gives the same positions), `backlinks` (pages linking here), `last_change` (`sha`, `date`, `author`, `person`, `message`, or null) |
 | `edges` | `source`, `target`, `kind` (`parent` or `link`) |
-| `work` | open issues (`wiki:<slug>`) and open pull requests: `kind`, `number`, `title`, `url`, `author`, `person`, `assignees` (team ids), `pages`, `review_requested`, `draft`, `updated_at` |
+| `work` | open issues (`wiki:<slug>`) and open pull requests: `kind`, `number`, `title`, `url`, `author`, `person`, `assignees` (team ids), `pages`, `review_requested`, `draft`, `branch` (a pull request's head branch when it is in this repo, else null; issues have none), `updated_at` |
 | `questions` | `number`, `title`, `url`, `page`, `asker`, `answered`, `answer_excerpt`, `updated_at` (closed questions with no answer are dropped) |
 | `recent` | last 40 commits touching a page or its code: `sha`, `date`, `author`, `person`, `message`, `pages` |
+| `branches` | remote branches other than master whose newest commit is from the last 14 days and that have commits master lacks, newest first: `name`, `person` and `author` (the newest commit's author), `last_commit` (`sha`, `date`, `message`), `ahead` (commits not on master), `pages` (pages whose file or `code:` paths cover the files changed since the branch left master; pre-`src/` paths count for today's pages), `pr` (`number`, `url` of an open pull request from this branch, else null). Read from local git: run `git fetch` first for fresh data |
 
 `person` is a team id, or null when the author is not in `docs/team.yml`.
 

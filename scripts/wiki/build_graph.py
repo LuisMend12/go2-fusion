@@ -13,8 +13,10 @@ What goes in (the full shape is in scripts/wiki/README.md):
   fixed 2D position for each page (same input, same positions);
 - the team from docs/team.yml, plus the pages each person has worked on
   (their "past" list and the pages whose code or file they committed to);
-- from git: each page's last change, and the last 40 commits that touched a
-  page or its code;
+- from git: each page's last change, the last 40 commits that touched a
+  page or its code, and the active branches (remote branches other than
+  master with a commit in the last 14 days, matched to pages by the files
+  they change);
 - from GitHub, only with GITHUB_TOKEN and GITHUB_REPOSITORY set (as in
   GitHub Actions): open work (issues labelled "wiki:<slug>" and open pull
   requests, matched to pages by the files they change) and questions (issues
@@ -31,7 +33,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -43,6 +45,8 @@ TEAM = ROOT / "docs" / "team.yml"
 OUT = ROOT / "site" / "graph.json"
 CENTER = "oak"
 RECENT_LIMIT = 40
+BRANCH_DAYS = 14
+BASE_REF = "refs/remotes/origin/master"
 DEFAULT_REPO = "maxhawksby/go2-fusion"
 
 # [text](target) but not images ![alt](src)
@@ -455,6 +459,86 @@ def contributions(commits, pages, people, limit=8):
             for pid, cs in counts.items()}
 
 
+# ---------------------------------------------------------------- branches
+
+def parse_date(iso):
+    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
+def active_branches(refs, pages, people, work, now, info, days=BRANCH_DAYS):
+    """Sandbox branches people pushed lately, newest first.
+
+    refs: [{name, sha, date, author, email, message}] for each remote branch
+    tip (date is the tip's commit date). Branches whose tip is older than
+    `days`, and branches with nothing master lacks (already merged), are left
+    out. info(name) -> (ahead, files): commits not on master, and the files
+    changed since the branch left master. Files in the pre-src/ layout land
+    on today's pages, as in contributions().
+    """
+    cutoff = now - timedelta(days=days)
+    packages = {g.split("/")[1] for page in pages.values() for g in page["code"]
+                if g.startswith("src/") and g.count("/") >= 1}
+    prs = {w["branch"]: w for w in work if w.get("kind") == "pr" and w.get("branch")}
+    out = []
+    for ref in refs:
+        if parse_date(ref["date"]) < cutoff:
+            continue
+        ahead, files = info(ref["name"])
+        if not ahead:
+            continue
+        pr = prs.get(ref["name"])
+        out.append({
+            "name": ref["name"],
+            "person": match_person(people, name=ref["author"], email=ref["email"]),
+            "author": ref["author"],
+            "last_commit": {"sha": ref["sha"], "date": ref["date"], "message": ref["message"]},
+            "ahead": ahead,
+            "pages": pages_for_files([code_path(f, packages) for f in files], pages),
+            "pr": {"number": pr["number"], "url": pr["url"]} if pr else None,
+        })
+    out.sort(key=lambda b: parse_date(b["last_commit"]["date"]), reverse=True)
+    return out
+
+
+def git_branch_refs(base=BASE_REF):
+    """Tips of the origin branches other than the base: list of ref dicts."""
+    fmt = "%(refname)%1f%(objectname)%1f%(committerdate:iso-strict)%1f%(authorname)%1f%(authoremail)%1f%(subject)"
+    r = subprocess.run(["git", "for-each-ref", "refs/remotes/origin", f"--format={fmt}"],
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        warn("git for-each-ref failed; building without active branches.")
+        return []
+    refs = []
+    for line in r.stdout.splitlines():
+        parts = line.split("\x1f", 5)
+        if len(parts) != 6:
+            continue
+        refname, sha, date, author, email, message = parts
+        if refname == base or refname.endswith("/HEAD"):
+            continue
+        refs.append({"name": refname[len("refs/remotes/origin/"):], "sha": sha, "date": date,
+                     "author": author, "email": email.strip("<>"), "message": message})
+    return refs
+
+
+def git_branch_info(name, base=BASE_REF):
+    """(commits not on the base, files changed since the merge base)."""
+    ref = f"refs/remotes/origin/{name}"
+    count = subprocess.run(["git", "rev-list", "--count", f"{base}..{ref}"], cwd=ROOT, capture_output=True, text=True)
+    diff = subprocess.run(["git", "diff", "--name-only", f"{base}...{ref}"], cwd=ROOT, capture_output=True, text=True)
+    if count.returncode != 0 or diff.returncode != 0:
+        return 0, []
+    return int(count.stdout.strip() or 0), [f for f in diff.stdout.splitlines() if f.strip()]
+
+
+def fetch_branches(pages, people, work):
+    if subprocess.run(["git", "rev-parse", "--verify", "--quiet", BASE_REF], cwd=ROOT,
+                      capture_output=True).returncode != 0:
+        warn(f"no {BASE_REF}; building without active branches.")
+        return []
+    return active_branches(git_branch_refs(), pages, people, work, datetime.now(timezone.utc), git_branch_info)
+
+
 # ---------------------------------------------------------------- GitHub
 
 def wiki_pages_from_labels(labels, pages):
@@ -512,8 +596,12 @@ def work_from_issue(issue, pages, people):
     }
 
 
-def work_from_pr(pr, files, pages, people):
+def work_from_pr(pr, files, pages, people, repo=None):
     author = (pr.get("user") or {}).get("login", "")
+    head = pr.get("head") or {}
+    head_repo = ((head.get("repo") or {}).get("full_name") or "").lower()
+    # Only a branch in this repo can match an active branch; a fork's "main" is not ours.
+    branch = head.get("ref") if head.get("ref") and (repo is None or head_repo == repo.lower()) else None
     on = sorted(set(pages_for_files(files, pages)) | set(wiki_pages_from_labels(pr.get("labels", []), pages)))
     review = bool(pr.get("requested_reviewers") or pr.get("requested_teams") or "review" in label_names(pr))
     return {
@@ -522,6 +610,7 @@ def work_from_pr(pr, files, pages, people):
         "person": match_person(people, login=author),
         "assignees": _assignees(pr, people),
         "pages": on, "review_requested": review, "draft": bool(pr.get("draft")),
+        "branch": branch,
         "updated_at": pr.get("updated_at", ""),
     }
 
@@ -573,7 +662,7 @@ def fetch_github(pages, people):
                 work.append(w)
         for pr in gh.get_all("pulls?state=open&per_page=100"):
             files = [f["filename"] for f in gh.get_all(f"pulls/{pr['number']}/files?per_page=100")]
-            work.append(work_from_pr(pr, files, pages, people))
+            work.append(work_from_pr(pr, files, pages, people, repo))
         for issue in gh.get_all("issues?state=all&labels=question&per_page=100"):
             if "pull_request" in issue:
                 continue
@@ -630,6 +719,7 @@ def build():
         p["contributed"] = contributed.get(p["id"], [])
         p["worked_on"] = list(dict.fromkeys(p["past"] + p["contributed"]))
     work, questions = fetch_github(pages, people)
+    branches = fetch_branches(pages, people, work)
 
     nodes = []
     for pid, page in pages.items():
@@ -666,6 +756,7 @@ def build():
         "work": work,
         "questions": questions,
         "recent": recent,
+        "branches": branches,
     }
 
 
@@ -680,7 +771,8 @@ def main():
     prs = sum(1 for w in graph["work"] if w["kind"] == "pr")
     print(f"Wrote {rel(OUT)}: {len(graph['nodes'])} pages, {len(graph['edges']) - links} parent edges, "
           f"{links} cross links, {len(graph['people'])} people, {len(graph['recent'])} recent commits, "
-          f"{len(graph['work']) - prs} work issues, {prs} open PRs, {len(graph['questions'])} questions.")
+          f"{len(graph['work']) - prs} work issues, {prs} open PRs, {len(graph['questions'])} questions, "
+          f"{len(graph['branches'])} active branches.")
 
 
 if __name__ == "__main__":
