@@ -17,3 +17,6 @@ src/go2_robot_sdk/coverage.xml
 /go2_auto_mapper/
 /object_detection/
 .pytest_cache/
+
+# Built by scripts/wiki/build_graph.py
+site/graph.json
