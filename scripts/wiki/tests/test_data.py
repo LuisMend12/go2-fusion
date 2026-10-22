@@ -26,6 +26,7 @@ people:
     color: "#ff4d5e"   # red
     discord_id: ""
     focus: Computer vision - YOLO
+    past: [object-detection]
 
   - id: luis
     name: Luis
@@ -113,6 +114,31 @@ class TestPeople(unittest.TestCase):
         self.assertEqual(PEOPLE[0]["color"], "#ff4d5e")
         self.assertEqual(PEOPLE[0]["focus"], "Computer vision - YOLO")
         self.assertEqual(PEOPLE[1]["discord_id"], "123456789")
+        self.assertEqual(PEOPLE[0]["past"], ["object-detection"])
+        self.assertEqual(PEOPLE[1]["past"], [])
+
+    def test_contributions_by_commit_count(self):
+        pages = {
+            "oak": {"file": bg.ROOT / "README.md", "code": []},
+            "slam": {"file": bg.WIKI / "slam.md", "code": ["src/slam/**"]},
+            "lidar": {"file": bg.WIKI / "lidar.md", "code": ["src/lidar/**"]},
+            "voice": {"file": bg.WIKI / "voice.md", "code": ["src/voice/**"]},
+        }
+
+        def c(name, email, *files):
+            return {"author": name, "email": email, "files": list(files)}
+        luis = "128239393+LuisMend12@users.noreply.github.com"
+        commits = [
+            c("LuisM23", luis, "src/lidar/a.py", "README.md"),
+            c("LuisMend12", luis, "src/lidar/b.py"),
+            c("LuisMend12", luis, "docs/wiki/slam.md"),
+            c("Max Hawksby", "max@example.com", "docs/wiki/voice.md", "src/voice/x.py"),
+            c("Stranger", "s@example.com", "src/slam/x.py"),
+        ]
+        got = bg.contributions(commits, pages, PEOPLE)
+        self.assertEqual(got["luis"], ["lidar", "slam"])  # 2 commits, then 1; Oak left out
+        self.assertEqual(got["max"], ["voice"])            # one commit, counted once
+        self.assertEqual(bg.contributions(commits, pages, PEOPLE, limit=1)["luis"], ["lidar"])
 
     def test_match_by_login_email_and_name(self):
         m = bg.match_person

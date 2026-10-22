@@ -19,7 +19,7 @@
 <body>
   <a class="skip" href="#reader">Skip to page</a>
   <div class="app" id="app">
-    <!-- Left: search, tree, work, recent -->
+    <!-- Left: search, tree, people, recent -->
     <aside class="side" id="side" aria-label="Workspace">
       <div class="side-head">
         <button class="brand" id="home" type="button" title="Open Oak">
@@ -41,9 +41,13 @@
           <h2 class="side-h" id="h-tree">Pages</h2>
           <ul class="tree" id="tree"></ul>
         </section>
-        <section class="side-sec" aria-labelledby="h-work">
-          <h2 class="side-h" id="h-work">Working on now</h2>
-          <ul class="feed" id="work"></ul>
+        <section class="side-sec" aria-labelledby="h-people">
+          <div class="side-h-row">
+            <h2 class="side-h" id="h-people">People</h2>
+            <button type="button" class="side-tog" id="work-tog" aria-expanded="false" aria-controls="work">All open work</button>
+          </div>
+          <ul class="people-list" id="people-list"></ul>
+          <ul class="feed all-work" id="work" hidden></ul>
         </section>
         <section class="side-sec" aria-labelledby="h-recent">
           <h2 class="side-h" id="h-recent">Recent changes</h2>
@@ -102,7 +106,6 @@
     <section class="map" id="map" aria-labelledby="h-map">
       <div class="map-bar">
         <h2 class="map-h" id="h-map">Map</h2>
-        <div class="people" id="people" role="group" aria-label="Show a teammate's work"></div>
       </div>
       <div class="map-stage" id="stage">
         <canvas id="graph" role="img" aria-label="Map of the pages: hubs in colored clusters around Oak. Use the page list for keyboard navigation."></canvas>

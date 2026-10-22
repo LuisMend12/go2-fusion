@@ -18,7 +18,7 @@ GITHUB_TOKEN=$(gh auth token) GITHUB_REPOSITORY=maxhawksby/go2-fusion python3 sc
 
 It only reads from GitHub. Tests: `python3 -m unittest discover -s scripts/wiki/tests`.
 
-Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Add `?person=<id>` to the URL to start with a teammate's work highlighted.
+Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Open `#people/<id>` (for example `#people/max`) for a teammate's view: focus, open work, pages they have worked on and their recent changes, with their pages ringed on the map.
 
 ## Add a page
 
@@ -36,7 +36,7 @@ Link pages with normal relative markdown links, for example `[Senses](senses.md)
 
 ## The team: docs/team.yml
 
-One block per person: `id` (short, lowercase), `name`, `github` (login), `color` (their color on the site), `discord_id` (numeric Discord user id, for @mentions; empty until filled in) and `focus` (one line). Commits and GitHub activity are matched to a person by GitHub login, by the `<login>@users.noreply.github.com` email, or by git author name. Keep the simple `key: value` shape; the builder reads it without a YAML library.
+One block per person: `id` (short, lowercase), `name`, `github` (login), `color` (their color on the site), `discord_id` (numeric Discord user id, for @mentions; empty until filled in), `focus` (one line) and optionally `past` (a list of page slugs they worked on before, like `past: [object-detection]`). Commits and GitHub activity are matched to a person by GitHub login, by the `<login>@users.noreply.github.com` email, or by git author name. Keep the simple `key: value` shape; the builder reads it without a YAML library.
 
 ## Work, questions and reviews
 
@@ -51,7 +51,7 @@ One block per person: `id` (short, lowercase), `name`, `github` (login), `color`
 | Field | What it holds |
 | --- | --- |
 | `version`, `branch`, `published`, `generated_at`, `repo` | 2; the branch the GitHub links point at; whether that branch is on GitHub; build time; `owner/name` |
-| `people` | `docs/team.yml`: `id`, `name`, `github`, `color`, `discord_id`, `focus` |
+| `people` | `docs/team.yml`: `id`, `name`, `github`, `color`, `discord_id`, `focus`, `past`; plus `contributed` (up to 8 pages whose file or `code:` paths they committed to, most commits first, Oak left out) and `worked_on` (`past` then `contributed`, no repeats) |
 | `nodes` | one per page: `id`, `title`, `parent`, `hub`, `depth`, `code`, `path`, `markdown`, `summary`, `x`, `y` (fixed layout: Oak at 0,0, hubs on a ring, pages fanned out from their hub; same input gives the same positions), `backlinks` (pages linking here), `last_change` (`sha`, `date`, `author`, `person`, `message`, or null) |
 | `edges` | `source`, `target`, `kind` (`parent` or `link`) |
 | `work` | open issues (`wiki:<slug>`) and open pull requests: `kind`, `number`, `title`, `url`, `author`, `person`, `assignees` (team ids), `pages`, `review_requested`, `draft`, `updated_at` |

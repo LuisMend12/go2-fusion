@@ -11,7 +11,8 @@ Then open http://localhost:8765/.
 What goes in (the full shape is in scripts/wiki/README.md):
 - pages, their parent and link edges, backlinks, a one-sentence summary and a
   fixed 2D position for each page (same input, same positions);
-- the team from docs/team.yml;
+- the team from docs/team.yml, plus the pages each person has worked on
+  (their "past" list and the pages whose code or file they committed to);
 - from git: each page's last change, and the last 40 commits that touched a
   page or its code;
 - from GitHub, only with GITHUB_TOKEN and GITHUB_REPOSITORY set (as in
@@ -307,9 +308,21 @@ def parse_team(text):
         if cur is None or ":" not in stripped:
             continue
         key, value = stripped.split(":", 1)
-        cur[key.strip()] = value.strip().strip("'\"")
+        value = value.strip()
+        if value.startswith("[") and value.endswith("]"):
+            cur[key.strip()] = [v.strip().strip("'\"") for v in value[1:-1].split(",") if v.strip()]
+        else:
+            cur[key.strip()] = value.strip("'\"")
     fields = ("id", "name", "github", "color", "discord_id", "focus")
-    return [{f: p.get(f, "") for f in fields} for p in people if p.get("id")]
+    out = []
+    for p in people:
+        if not p.get("id"):
+            continue
+        rec = {f: p.get(f, "") if isinstance(p.get(f, ""), str) else "" for f in fields}
+        past = p.get("past", [])
+        rec["past"] = past if isinstance(past, list) else ([past] if past else [])
+        out.append(rec)
+    return out
 
 
 def load_team():
@@ -392,6 +405,25 @@ def history(commits, pages, people):
         if len(recent) < RECENT_LIMIT:
             recent.append({**entry, "pages": touched})
     return last, recent
+
+
+def contributions(commits, pages, people, limit=8):
+    """Pages each person has worked on, from git: {person id: [slug, ...]}.
+
+    A commit counts for a page when it touches the page's file or its code:
+    paths. Pages are sorted by that person's commit count (ties by slug), top
+    `limit`. The center page (README.md) is left out: everyone edits it.
+    """
+    counts = {p["id"]: {} for p in people}
+    for c in commits:
+        pid = match_person(people, name=c["author"], email=c["email"])
+        if pid is None:
+            continue
+        for page in pages_for_files(c["files"], pages):
+            if page != CENTER:
+                counts[pid][page] = counts[pid].get(page, 0) + 1
+    return {pid: [s for s, _ in sorted(cs.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
+            for pid, cs in counts.items()}
 
 
 # ---------------------------------------------------------------- GitHub
@@ -558,7 +590,16 @@ def build():
     pages = load_pages()
     edges, backlinks = collect_edges(pages)
     people = load_team()
-    last, recent = history(git_commits(), pages, people)
+    commits = git_commits()
+    last, recent = history(commits, pages, people)
+    contributed = contributions(commits, pages, people)
+    for p in people:
+        unknown = [s for s in p["past"] if s not in pages]
+        if unknown:
+            warn(f"{rel(TEAM)}: {p['id']} has past pages that do not exist: {', '.join(unknown)}.")
+        p["past"] = [s for s in p["past"] if s in pages]
+        p["contributed"] = contributed.get(p["id"], [])
+        p["worked_on"] = list(dict.fromkeys(p["past"] + p["contributed"]))
     work, questions = fetch_github(pages, people)
 
     nodes = []

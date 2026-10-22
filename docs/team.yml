@@ -14,13 +14,16 @@
 #             Empty until filled in (Discord: Settings > Advanced >
 #             Developer Mode, then right-click the name > Copy User ID).
 # focus       one line, what they are working on now
+# past        optional: slugs of wiki pages they worked on before, which
+#             git history may not show, e.g. past: [object-detection]
 people:
   - id: max
     name: Max
     github: maxhawksby
     color: "#ff4d5e"
     discord_id: ""
-    focus: Computer vision - YOLO object memory; leads the wiki
+    focus: Wiki organization, repository cleanup and agentic revision
+    past: [object-detection]
 
   - id: luis
     name: Luis

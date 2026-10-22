@@ -1,5 +1,5 @@
-/* Oak workspace v2: sidebar (search, page tree, work, recent), reading pane
-   (page, backlinks, ask box) and a fixed 2D map of the pages.
+/* Oak workspace v2: sidebar (search, page tree, people, recent), reading pane
+   (page, backlinks, ask box, or a teammate's view) and a fixed 2D map.
    Data: graph.json (scripts/wiki/build_graph.py), else sample-graph.json. */
 (function () {
   "use strict";
@@ -33,7 +33,7 @@
   // ---------- state ----------
   let D = null;               // graph data
   const byId = {}, byPath = {}, kids = {}, nbrs = {}, people = {};
-  let hubs = [], current = null, filterPerson = null;
+  let hubs = [], current = null, filterPerson = null, viewedPerson = null;
 
   // ---------- load ----------
   function getJSON(url) {
@@ -55,7 +55,7 @@
     D = normalize(data);
     index();
     if (D.nodes.some((n) => typeof n.x !== "number" || typeof n.y !== "number")) layout();
-    renderTree(); renderWork(); renderRecent(); renderPeople(); renderLegend(); renderDataNote();
+    renderTree(); renderWork(); renderRecent(); renderPeopleList(); renderLegend(); renderDataNote();
     setupSearch(); setupAsk(); setupDrawer();
     Graph.init();
     window.addEventListener("hashchange", route);
@@ -79,6 +79,10 @@
     });
     out.work.forEach((w) => { w.pages = arr(w.pages); w.assignees = arr(w.assignees); });
     out.recent.forEach((r) => { r.pages = arr(r.pages); });
+    out.people.forEach((p) => {
+      p.past = arr(p.past); p.contributed = arr(p.contributed);
+      p.worked_on = arr(p.worked_on).length ? arr(p.worked_on) : [...new Set(p.past.concat(p.contributed))];
+    });
     return out;
   }
 
@@ -119,10 +123,11 @@
   }
   const scopeOf = (n) => new Set(n.depth < 2 ? descendants(n.id) : [n.id]);
   const workOn = (ids) => D.work.filter((w) => w.pages.some((p) => ids.has(p)));
+  const workOf = (pid) => D.work.filter((w) => w.person === pid || w.assignees.includes(pid));
   function personPages(pid) {
-    const s = new Set();
-    D.work.forEach((w) => { if (w.person === pid || w.assignees.includes(pid)) w.pages.forEach((p) => s.add(p)); });
-    D.recent.forEach((r) => { if (r.person === pid) r.pages.forEach((p) => s.add(p)); });
+    const s = new Set((people[pid] && people[pid].worked_on) || []);
+    workOf(pid).forEach((w) => w.pages.forEach((p) => s.add(p)));
+    s.delete("oak");
     return s;
   }
   const workByPage = {};
@@ -149,6 +154,7 @@
   const codeDir = (glob) => glob.split(/[*?[]/)[0].replace(/\/+$/, "");
   const treeUrl = (glob) => GH() + "/tree/" + D.branch + "/" + codeDir(glob);
   const pageHash = (id, anchor) => "#" + id + (anchor ? "/" + anchor : "");
+  const personHash = (pid) => "#people/" + pid;
 
   function resolvePath(base, href) {
     const dir = base.includes("/") ? base.slice(0, base.lastIndexOf("/") + 1) : "";
@@ -296,23 +302,30 @@
     }
   }
 
-  // ---------- map bar: people + legend ----------
-  function renderPeople() {
-    const box = $("people");
+  // ---------- sidebar: people ----------
+  const personLinks = {};
+  function renderPeopleList() {
+    const ul = $("people-list");
     D.people.forEach((p) => {
-      const b = h("button", { type: "button", class: "person", "aria-pressed": "false", style: "--c:" + p.color,
-        title: p.focus ? p.name + ": " + p.focus : p.name }, h("span", { class: "dot", "aria-hidden": "true" }), p.name);
-      b.addEventListener("click", () => {
-        filterPerson = filterPerson === p.id ? null : p.id;
-        box.querySelectorAll(".person").forEach((x) => x.setAttribute("aria-pressed", String(x === b && !!filterPerson)));
-        renderLegend();
-        if (filterPerson) Graph.fit(); else Graph.draw();
-      });
-      box.append(b);
+      const open = workOf(p.id).length;
+      const b = h("button", { type: "button", class: "p-link", style: "--c:" + p.color, onclick: () => goPerson(p.id) },
+        dot(p.color),
+        h("span", { class: "p-name" }, p.name),
+        open ? h("span", { class: "p-count", title: open + " open " + (open === 1 ? "item" : "items") }, String(open)) : null,
+        p.focus ? h("span", { class: "p-focus" }, p.focus) : null);
+      personLinks[p.id] = b;
+      ul.append(h("li", null, b));
     });
-    // ?person=<id> preselects a teammate (handy for sharing a view)
+    if (!D.people.length) ul.append(h("li", { class: "none" }, "No team file yet (docs/team.yml)."));
+    const tog = $("work-tog"), work = $("work");
+    tog.addEventListener("click", () => {
+      const show = tog.getAttribute("aria-expanded") !== "true";
+      tog.setAttribute("aria-expanded", String(show));
+      work.hidden = !show;
+    });
+    // old links with ?person=<id> open that teammate's view
     const pre = new URLSearchParams(location.search).get("person");
-    if (pre && people[pre]) box.querySelector('[title^="' + people[pre].name + '"]').click();
+    if (pre && people[pre] && !location.hash) history.replaceState(null, "", personHash(pre));
   }
   function renderLegend() {
     const el = $("legend");
@@ -407,12 +420,17 @@
     const target = pageHash(id, anchor);
     if (location.hash === target) route(); else location.hash = target;
   }
+  function goPerson(pid) {
+    const target = personHash(pid);
+    if (location.hash === target) route(); else location.hash = target;
+  }
   function route() {
     const raw = decodeURIComponent(location.hash.slice(1));
     const [id, anchor] = raw.split("/");
+    closeDrawer();
+    if (id === "people" && anchor && people[anchor]) { openPerson(people[anchor]); return; }
     const oak = D.nodes.find((n) => n.depth === 0) || D.nodes[0];
     const n = byId[id] || oak;
-    closeDrawer();
     if (!n) return;
     if (current !== n) openPage(n);
     if (anchor) {
@@ -422,9 +440,19 @@
   }
 
   // ---------- reading pane ----------
+  function setMode(personId) {
+    filterPerson = personId;
+    Object.entries(personLinks).forEach(([id, el]) => { if (id === personId) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current"); });
+    $("ask").hidden = !!personId;
+    $("ask-jump").hidden = !!personId;
+    renderLegend();
+  }
+
   function openPage(n) {
-    const first = !current;
+    const first = !current && !filterPerson && !viewedPerson;
     current = n;
+    viewedPerson = null;
+    setMode(null);
     document.title = n.depth === 0 ? "Oak Workspace" : n.title + " - Oak Workspace";
     Object.entries(treeLinks).forEach(([id, el]) => { if (id === n.id) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current"); });
     if (n.hub && n.depth > 1) setOpen(n.hub, true);
@@ -438,6 +466,80 @@
     $("reader-scroll").scrollTop = 0;
     if (!first && window.matchMedia("(max-width: 900px)").matches) window.scrollTo({ top: 0, behavior: "auto" });
     Graph.focus(n, first);
+  }
+
+  // ---------- a teammate's view ----------
+  function openPerson(p) {
+    const first = !current && !viewedPerson;
+    current = null;
+    viewedPerson = p;
+    setMode(p.id);
+    document.title = p.name + " - Oak Workspace";
+    Object.values(treeLinks).forEach((el) => el.removeAttribute("aria-current"));
+    const pl = personLinks[p.id]; if (pl) pl.scrollIntoView({ block: "nearest" });
+
+    const nav = $("crumbs");
+    nav.textContent = "";
+    nav.append(h("button", { type: "button", onclick: () => go("people") }, "People"),
+      h("span", { class: "sep", "aria-hidden": "true" }, "/"), h("span", { "aria-current": "page" }, p.name));
+    ["banner", "meta", "backlinks", "saved"].forEach((id) => { $(id).textContent = ""; });
+
+    const el = $("content");
+    el.textContent = "";
+    const pageBtn = (id) => byId[id] ? h("button", { type: "button", class: "pg-chip", onclick: () => go(id) }, dot(nodeColor(byId[id])), byId[id].title) : null;
+    const sec = (title, count, body) => h("section", { class: "pv-sec" },
+      h("h2", null, title, count ? h("span", { class: "pv-n" }, String(count)) : null), body);
+
+    el.append(h("header", { class: "pv-head", style: "--c:" + p.color },
+      h("span", { class: "pv-dot", "aria-hidden": "true" }),
+      h("div", null,
+        h("h1", null, p.name),
+        h("p", { class: "pv-focus" }, h("span", { class: "pv-label" }, "Current focus"), p.focus || "TODO(" + p.id + "): add a focus line in docs/team.yml"),
+        p.github ? h("a", { class: "pv-gh", href: "https://github.com/" + p.github, target: "_blank", rel: "noopener" }, "@" + p.github + " on GitHub") : null)));
+
+    // Working on now
+    const ws = workOf(p.id).sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+    const noGithub = !D.work.length && !D.sample;
+    el.append(sec("Working on now", ws.length, ws.length
+      ? h("ul", { class: "pv-work", style: "--c:" + p.color }, ws.map((w) => h("li", null,
+          h("div", { class: "pv-w-top" },
+            h("a", { href: w.url, target: "_blank", rel: "noopener" }, (w.kind === "pr" ? "PR" : "Issue") + " #" + w.number + ": " + w.title),
+            w.review_requested ? h("span", { class: "tag" }, "review requested") : null,
+            w.draft ? h("span", { class: "tag draft" }, "draft") : null,
+            h("span", { class: "pv-when" }, rel(w.updated_at))),
+          w.pages.some((x) => byId[x]) ? h("div", { class: "pv-pages" }, w.pages.map(pageBtn)) : null)))
+      : h("p", { class: "pv-none" }, noGithub ? "No open work shown: this copy was built without GitHub access."
+        : "No open issues or pull requests right now.")));
+
+    // Has worked on
+    const past = new Set(p.past);
+    const worked = p.worked_on.filter((id) => byId[id]);
+    el.append(sec("Has worked on", worked.length, worked.length
+      ? h("ul", { class: "pv-grid" }, worked.map((id) => {
+          const b = byId[id];
+          return h("li", null, h("button", { type: "button", class: "bl", onclick: () => go(id) },
+            h("span", { class: "bl-t" }, dot(nodeColor(b)), b.title, past.has(id) ? h("span", { class: "tag draft" }, "earlier work") : null),
+            b.summary ? h("span", { class: "bl-s" }, b.summary) : null));
+        }))
+      : h("p", { class: "pv-none" }, "No pages yet. Commits to a page or its code show up here.")));
+
+    // Recent changes by them
+    const rs = D.recent.filter((r) => r.person === p.id).slice(0, 8);
+    el.append(sec("Recent changes", rs.length, rs.length
+      ? h("ul", { class: "feed pv-recent" }, rs.map((r) => {
+          const firstPage = r.pages.find((x) => byId[x]);
+          return h("li", null, h("button", { type: "button", class: "f-item", onclick: () => firstPage && go(firstPage) },
+            dot(p.color), h("span", { class: "f-title" }, r.message),
+            h("span", { class: "f-sub" }, h("span", null, pageLabel(r.pages)), h("span", null, rel(r.date)),
+              r.sha ? h("code", null, r.sha.slice(0, 7)) : null)));
+        }))
+      : h("p", { class: "pv-none" }, "No changes by " + p.name + " in the last 40 commits that touched the wiki or its code.")));
+
+    const page = $("page");
+    page.classList.remove("enter"); void page.offsetWidth; page.classList.add("enter");
+    $("reader-scroll").scrollTop = 0;
+    if (!first && window.matchMedia("(max-width: 900px)").matches) window.scrollTo({ top: 0, behavior: "auto" });
+    Graph.fit(first);
   }
 
   function renderCrumbs(n) {
@@ -938,7 +1040,10 @@
     function hideTip() { tip.hidden = true; }
 
     // fit the whole map, e.g. so all of a teammate's pages are in view
-    function fit() { if (W) animateTo(computeFit()); }
+    function fit(instant) {
+      if (!W) return;
+      if (instant) { Object.assign(cam, computeFit()); draw(); } else animateTo(computeFit());
+    }
 
     return { init, focus, draw, fit };
   })();
