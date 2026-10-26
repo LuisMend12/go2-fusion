@@ -34,6 +34,7 @@ More detail on each person, and how to reach them, is on [People](people.md).
 
 - **Branches are your sandbox.** Push whatever you like to your own branch; no review needed.
 - **Merging into `master`** needs a GitHub pull request with one teammate's approval and green automatic checks. Nobody pushes to `master` directly.
+- **Review is for the robot.** A change to Oak's software (`src/`, `docker/`, `host_tools/`) or its build check needs one teammate's approval, even if it already works on Oak. Wiki pages, guides and team tooling (wiki site, Discord bot) skip it: once the checks pass, Max merges them.
 - **Tasks live as GitHub issues**, labelled `wiki:<page>` (for example `wiki:maps-nav`). Take one by assigning it to yourself.
 - **Keep the wiki true.** If you change a program's code, update its wiki page in the same pull request. A check fails otherwise.
 - **Test without the robot first.** There is one Oak, and it accepts one connection at a time.
