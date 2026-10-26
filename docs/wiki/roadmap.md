@@ -15,33 +15,49 @@ Real service dogs are very expensive. Our dream is that a robot dog costing abou
 
 To get there, Oak needs **autonomous mapping**: it must move on its own, with nobody holding the controller, building a map as it goes and finding its way on that map. That needs every hub working together: [Senses](senses.md) to see, [Maps & Nav](maps-nav.md) to map and plan, [Brains](brains.md) to understand and speak, and [Driving](driving.md) as the safety net.
 
-## The current milestone
+## The project brief
 
-**Oak maps and explores a room by itself.**
+Oak is our UConn Senior Design project, **"Autonomous Active Exploration and Mapping Using a Robot Dog"**, run by Dr. Jonathan Shihao Ji. Oak must explore an unfamiliar indoor space in the ITE building on its own and build an accurate floor map, with nobody driving it.
 
-Concretely: start the [Auto mapper](auto-mapper.md), and Oak picks spots at the edge of what it has seen (*frontiers*), walks to them with [Nav2](nav2.md), and builds the map with [SLAM](slam.md), until the room is covered. Luis's latest work fixed the main reasons it kept stopping; it is merged to `master` and now needs full tests on Oak.
+He grades six things: **map completeness, mapping accuracy, exploration time, navigation reliability (success rate), obstacle avoidance** (including people walking by), and **recovery** from failed attempts. He also expects a simulator setup, a try at LLM, VLM or VLA approaches to exploration, live demos on Oak, a benchmark table and a technical report. Demo day is the last week of the spring semester (May).
 
-## Next steps
+## The scorecard
 
-From the team's updates (week of 2026-10-18):
+Every lab run should fill one row of this table. Tracking issue: [#24](https://github.com/maxhawksby/go2-fusion/issues/24).
 
-1. **Full exploration tests on Oak** with the new auto mapper (Luis).
-2. **Odometry and turns:** find why position data sometimes stops, and compare requested vs measured rotation (Adib). Good odometry helps both mapping and the agent's angle turns.
-3. **Object memory on the map:** YOLO remembers where objects are, so a map can say "chair here" (Max, pull request #11).
-4. **Local voice:** fix Piper's packet loss, then connect speech to voice commands (Jeth, with Noah).
-5. **Oak Control dashboard:** a dedicated drive input and motion lock before live driving from the browser (Noah, pull request #14).
-6. **Local LLM agent:** bring Adib's Ollama agent into `master` (see [LLM agent](llm-agent.md)).
+| Grade | How we measure it | Pass mark |
+| --- | --- | --- |
+| Completeness | Mapped floor vs a tape-measured plan of the room | at least 95% |
+| Accuracy | Wall lengths and door positions vs tape measure | median error 5 cm or less |
+| Exploration time | Start to "complete", vs driving the same room by hand | faster than by hand |
+| Reliability | Runs finished with no human touch | at least 9 of 10 |
+| Obstacle avoidance | Collisions; a person steps in front 3 times | 0 collisions; stops, then resumes |
+| Recovery | Planned failures: blocked door, lidar cut, Wi-Fi drop, SLAM restart | recovers from at least 4 of 5 |
+| Laptop load | CPU and RAM during a run | 70% CPU or less, no WSL crash |
 
-From the open issues of the last robot test ([Test log](test-log.md)):
+## Phases
 
-1. Retest Nav2 goals and click-to-walk in the [map viewers](map-viewers.md).
-2. Retest how keyboard driving feels after the teleop fixes.
-3. Find what starts the lidar-to-pointcloud node and check its input topic ([Lidar](lidar.md)).
-4. Confirm by eye that Oak stops cleanly when a drive source goes quiet.
+A phase ends only when its gate passes on Oak.
 
-There are no open GitHub issues yet. When you take on one of these, open an issue labelled `wiki:<page>` and assign yourself.
+0. **Measure** (Oct 26 - Nov 8): fix the TF links, merge the sensor watchdog, build the run logger, 3 recorded runs. *Gate:* the first real scorecard, even if every number is bad.
+1. **Reliable** (Nov 9 - Dec 6): replay recorded runs, a simulator of the lab room, save and resume the map, failure drills. *Gate:* 8 of 10 runs with no hands.
+2. **Fast and accurate** (Dec 7 - Feb 7): a planner made for a dog that turns in place, face the frontier on arrival, drift and turn tests, a lighter launch for laptops. *Gate:* every pass mark met in the lab room.
+3. **Smart exploration** (Feb 8 - Mar 21): a vision-language model ranks frontiers from the camera, YOLO labels the map; A/B test against plain frontiers. *Gate:* a measured answer to "does AI help?".
+4. **Prove it at ITE** (Mar 22 - demo day): 2-3 tape-measured ITE spaces, 10 scored runs each, benchmark table, report, two rehearsals.
 
-TODO(Max): the order of these steps, and dates for the milestone.
+## Who owns what
+
+Claim your issue by assigning yourself.
+
+- **Luis - exploration brain:** the [Auto mapper](auto-mapper.md), frontier choice, [Nav2](nav2.md) tuning. [#25](https://github.com/maxhawksby/go2-fusion/issues/25)
+- **Adib - localization:** the [TF tree](tf.md), odometry timing, [SLAM](slam.md) settings, drift and turns; later leads Phase 3. [#26](https://github.com/maxhawksby/go2-fusion/issues/26)
+- **Noah - scoreboard:** run logger, recordings, replay; the Oak Control dashboard as mission control. [#27](https://github.com/maxhawksby/go2-fusion/issues/27)
+- **Jeth - simulator and answer key:** Gazebo world of the lab room, tape-measured floor plans. [#28](https://github.com/maxhawksby/go2-fusion/issues/28)
+- **Max - recovery, plan, report:** sensor watchdog, save and resume the map, failure drills, the technical report. [#29](https://github.com/maxhawksby/go2-fusion/issues/29)
+
+**Parked until Phase 2 passes:** speech output, driving from the dashboard, voice commands, the general LLM agent, wiki polish. Each comes back when it serves a scorecard row.
+
+**Weekly rhythm:** one lab session (record every run), then a 20-minute scorecard review; each person picks the worst number they own. A change merges only if a recording or replay shows it did not make a number worse.
 
 ## Plans on file
 
@@ -55,4 +71,4 @@ These come from [Decisions](decisions.md) follow-ups, not from a team plan yet:
 - Retire the older `coco_detector` once YOLO publishes the standard detection message.
 - Semantic maps (maps that know what things are) would need a GPU; Riley's experiments were left out for now.
 
-<!-- sources: vision, $3,000 figure and milestone: Max via coordinator 2026-10-22 (README.md "Why we're building it"); team updates week of 2026-10-18; gh pr list (#11, #14) and gh issue list (no open issues, 2026-10-22); docs/TEST_LOG.md "Open issues" 1-4; docs/plans/pending/2026-10-08-claude-llm-agent.md; origin/adib/feat/llm-agent plan-file note; docs/FUSION.md "Follow-ups" 2-3 and "Left out" -->
+<!-- sources: project brief, grades, deliverables, demo month: Dr. Ji's Senior Design brief via Max 2026-10-25; scorecard, phases, lanes: Max's decisions 2026-10-25 (issues #24-#29); vision, $3,000 figure and milestone: Max via coordinator 2026-10-22 (README.md "Why we're building it"); team updates week of 2026-10-18; gh pr list (#11, #14) and gh issue list (no open issues, 2026-10-22); docs/TEST_LOG.md "Open issues" 1-4; docs/plans/pending/2026-10-08-claude-llm-agent.md; origin/adib/feat/llm-agent plan-file note; docs/FUSION.md "Follow-ups" 2-3 and "Left out" -->
