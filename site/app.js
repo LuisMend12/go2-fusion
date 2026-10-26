@@ -52,7 +52,7 @@
     index();
     if (D.nodes.some((n) => typeof n.x !== "number" || typeof n.y !== "number")) layout();
     renderTree(); renderWork(); renderRecent(); renderPeopleList(); renderLegend(); renderDataNote();
-    setupSearch(); setupAsk(); setupDrawer(); setupMapToggle();
+    setupSearch(); setupAsk(); setupDrawer(); setupPanes(); setupFind();
     Graph.init();
     window.addEventListener("hashchange", route);
     route();
@@ -378,7 +378,7 @@
           let s = 0;
           for (const term of terms) {
             if (t.includes(term)) s += t.startsWith(term) ? 12 : 8;
-            else if (b.includes(term)) s += 2;
+            else if (b.includes(term)) s += 2 + Math.min(b.split(term).length - 2, 5) * 0.3;   // more mentions rank higher
             else return null;
           }
           return { e, s: s + (e.kind === "page" ? 1 : 0) };
@@ -425,8 +425,11 @@
     }
     function pick(i) {
       const hit = hits[i]; if (!hit) return;
+      const q = input.value.trim();
       close(true);
-      if (hit.e.person) goPerson(hit.e.person.id); else go(hit.e.n.id);
+      if (hit.e.person) { goPerson(hit.e.person.id); return; }
+      if (q && hit.e.kind === "page") pendingFind = q;
+      go(hit.e.n.id);
     }
     function open() {
       if (!back.hidden) return;
@@ -453,23 +456,163 @@
       const t = e.target;
       const typing = t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); if (back.hidden) open(); else close(); return; }
-      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!back.hidden || typing || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "/") { e.preventDefault(); open(); }
       else if (e.key === "m" || e.key === "M") toggleMap();
+      else if (e.key === "[") toggleSide();
+      else if (find.marks.length && e.key === "Escape") clearFind();
+      else if (find.marks.length && e.key === "Enter" && !/^(A|BUTTON)$/.test(t.tagName)) { e.preventDefault(); showMatch(find.i + (e.shiftKey ? -1 : 1)); }
     });
   }
 
-  // ---------- map show/hide (remembered per browser) ----------
-  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+  // ---------- panes: show/hide and drag to resize (remembered per browser) ----------
+  function store(k, v) {
+    try {
+      if (v === undefined) return localStorage.getItem(k);
+      if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v);
+    } catch (e) { /* private mode: nothing is remembered */ }
+    return null;
+  }
+  const SIDE = { min: 180, max: 480 }, READER_MIN = 360, MAP_MIN = 240;
   function setMap(show) {
     $("app").classList.toggle("no-map", !show);
     $("map-tog").setAttribute("aria-pressed", String(show));
     store("oak.map", show ? "1" : "0");
+    clampPanes();
   }
   function toggleMap() { setMap($("app").classList.contains("no-map")); }
-  function setupMapToggle() {
+  function setSide(show, quiet) {
+    $("app").classList.toggle("no-side", !show);
+    $("side-show").hidden = show;
+    store("oak.side", show ? "1" : "0");
+    clampPanes();
+    if (quiet) return;
+    // keep keyboard focus on the button that brings it back
+    (show ? $("side-hide") : $("side-show")).focus({ preventScroll: true });
+  }
+  function toggleSide() { setSide($("app").classList.contains("no-side")); }
+  const paneW = (name) => parseFloat($("app").style.getPropertyValue("--" + name + "-w")) || null;
+  function setPaneW(name, px) {
+    if (px == null) { $("app").style.removeProperty("--" + name + "-w"); store("oak." + name + "W", null); return; }
+    $("app").style.setProperty("--" + name + "-w", Math.round(px) + "px");
+    store("oak." + name + "W", String(Math.round(px)));
+  }
+  // keep the reader at least READER_MIN wide when the window shrinks
+  function clampPanes() {
+    const app = $("app"), W = app.clientWidth;
+    const sideOn = !app.classList.contains("no-side"), mapOn = !app.classList.contains("no-map");
+    const side = sideOn ? $("side").getBoundingClientRect().width : 0;
+    const sw = paneW("side");
+    if (sw) app.style.setProperty("--side-w", Math.max(SIDE.min, Math.min(SIDE.max, sw)) + "px");
+    const mw = paneW("map");
+    if (mw && mapOn) app.style.setProperty("--map-w", Math.max(MAP_MIN, Math.min(W - side - READER_MIN, mw)) + "px");
+  }
+  function bindSizer(el, name) {
+    const app = $("app");
+    const limits = () => {
+      const W = app.clientWidth;
+      const side = app.classList.contains("no-side") ? 0 : $("side").getBoundingClientRect().width;
+      const map = app.classList.contains("no-map") ? 0 : $("map").getBoundingClientRect().width;
+      return name === "side" ? [SIDE.min, Math.min(SIDE.max, W - map - READER_MIN)] : [MAP_MIN, W - side - READER_MIN];
+    };
+    const current = () => (name === "side" ? $("side") : $("map")).getBoundingClientRect().width;
+    const set = (px) => { const [lo, hi] = limits(); setPaneW(name, Math.max(lo, Math.min(hi, px))); };
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      el.classList.add("dragging"); document.body.classList.add("resizing");
+      const r = app.getBoundingClientRect();
+      const move = (ev) => set(name === "side" ? ev.clientX - r.left : r.right - ev.clientX);
+      const up = () => {
+        el.classList.remove("dragging"); document.body.classList.remove("resizing");
+        el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
+      };
+      el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+    });
+    el.addEventListener("dblclick", () => setPaneW(name, null));
+    el.addEventListener("keydown", (e) => {
+      // arrows move the edge; for the map, left makes it wider
+      const step = e.shiftKey ? 64 : 16, dir = name === "side" ? 1 : -1;
+      if (e.key === "ArrowLeft") { e.preventDefault(); set(current() - step * dir); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); set(current() + step * dir); }
+      else if (e.key === "Home" || e.key === "Enter") { e.preventDefault(); setPaneW(name, null); }
+    });
+  }
+  function setupPanes() {
+    ["side", "map"].forEach((name) => { const w = parseFloat(store("oak." + name + "W")); if (w) $("app").style.setProperty("--" + name + "-w", w + "px"); });
+    setSide(store("oak.side") !== "0", true);
     setMap(store("oak.map") !== "0");
     $("map-tog").addEventListener("click", toggleMap);
+    $("side-hide").addEventListener("click", () => setSide(false));
+    $("side-show").addEventListener("click", () => setSide(true));
+    bindSizer($("size-side"), "side");
+    bindSizer($("size-map"), "map");
+    window.addEventListener("resize", clampPanes);
+  }
+
+  // ---------- find: highlight a search inside the open page ----------
+  // Opening a search result scrolls to the first place the words appear and
+  // marks every match; Enter / Shift+Enter step through them, Esc clears.
+  let pendingFind = null;
+  const find = { term: "", marks: [], i: 0 };
+  function clearFind() {
+    find.marks.forEach((m) => { const t = document.createTextNode(m.textContent); m.replaceWith(t); t.parentNode && t.parentNode.normalize(); });
+    find.marks = []; find.term = ""; find.i = 0;
+    $("find").hidden = true;
+  }
+  function findInPage(query) {
+    clearFind();
+    const root = $("content");
+    const q = query.trim().toLowerCase();
+    if (!q) return;
+    // whole phrase first; if it is not on the page, the longest single word
+    const texts = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (t) => (t.nodeValue.trim() && !t.parentElement.closest(".props, script, style") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    });
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) texts.push(t);
+    const has = (term) => texts.some((t) => t.nodeValue.toLowerCase().includes(term));
+    let term = q;
+    if (!has(term)) term = q.split(/\s+/).filter(has).sort((a, b) => b.length - a.length)[0];
+    if (!term) return;
+    texts.forEach((t) => {
+      const low = t.nodeValue.toLowerCase();
+      let at = low.indexOf(term);
+      if (at < 0) return;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      while (at >= 0 && find.marks.length < 300) {
+        frag.append(t.nodeValue.slice(last, at));
+        const m = h("mark", { class: "hit" }, t.nodeValue.slice(at, at + term.length));
+        find.marks.push(m); frag.append(m);
+        last = at + term.length;
+        at = low.indexOf(term, last);
+      }
+      frag.append(t.nodeValue.slice(last));
+      t.replaceWith(frag);
+    });
+    if (!find.marks.length) return;
+    find.term = term;
+    // start at the first match in the text, not the page title
+    const first = find.marks.findIndex((m) => !m.closest("h1"));
+    showMatch(first < 0 ? 0 : first);
+  }
+  function showMatch(i) {
+    if (!find.marks.length) return;
+    find.i = (i + find.marks.length) % find.marks.length;
+    find.marks.forEach((m, j) => m.classList.toggle("cur", j === find.i));
+    const m = find.marks[find.i];
+    m.scrollIntoView({ block: "center", behavior: reduceMotion.matches ? "auto" : "smooth" });
+    const t = $("find-text");
+    t.textContent = "";
+    t.append("\u201c", h("b", null, find.term), "\u201d  " + (find.i + 1) + " of " + find.marks.length);
+    $("find").hidden = false;
+  }
+  function setupFind() {
+    $("find-next").addEventListener("click", () => showMatch(find.i + 1));
+    $("find-prev").addEventListener("click", () => showMatch(find.i - 1));
+    $("find-close").addEventListener("click", clearFind);
   }
 
   // ---------- routing ----------
@@ -490,6 +633,7 @@
     const n = byId[id] || oak;
     if (!n) return;
     if (current !== n) openPage(n);
+    if (pendingFind) { const q = pendingFind; pendingFind = null; findInPage(q); return; }
     if (anchor) {
       const el = document.getElementById(anchor);
       if (el && $("content").contains(el)) el.scrollIntoView({ behavior: reduceMotion.matches ? "auto" : "smooth", block: "start" });
@@ -518,6 +662,7 @@
     const narrow = window.matchMedia("(max-width: 900px)").matches;
     const tl = treeLinks[n.id]; if (tl && !narrow) tl.scrollIntoView({ block: "nearest" });
 
+    clearFind();
     renderCrumbs(n); renderContent(n); renderProps(n); renderConnections(n); renderBacklinks(n); renderSaved(n); resetAsk();
 
     const page = $("page");
@@ -532,6 +677,7 @@
     const first = !current && !viewedPerson;
     current = null;
     viewedPerson = p;
+    clearFind();
     setMode(p.id);
     document.title = p.name + " - Oak Workspace";
     Object.values(treeLinks).forEach((el) => el.removeAttribute("aria-current"));

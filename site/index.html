@@ -24,6 +24,9 @@
     <aside class="side" id="side" aria-label="Workspace">
       <div class="side-head">
         <button class="brand" id="home" type="button" title="Open Oak">Oak</button>
+        <button class="icon-btn only-wide" id="side-hide" type="button" aria-label="Hide sidebar" title="Hide sidebar ([)">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/></svg>
+        </button>
         <button class="icon-btn only-narrow" id="side-close" type="button" aria-label="Close menu">
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
@@ -56,11 +59,27 @@
 
     <!-- Middle: the page -->
     <main class="reader" id="reader" tabindex="-1">
+      <div class="sizer" id="size-side" role="separator" aria-orientation="vertical" aria-label="Resize the sidebar" tabindex="0" title="Drag to resize, double-click to reset"></div>
       <div class="reader-bar">
+        <button class="icon-btn only-wide" id="side-show" type="button" aria-label="Show sidebar" title="Show sidebar ([)" hidden>
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/></svg>
+        </button>
         <button class="icon-btn only-narrow" id="side-open" type="button" aria-label="Open menu" aria-controls="side" aria-expanded="false">
           <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </button>
         <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+        <div class="find" id="find" role="search" aria-label="Matches on this page" hidden>
+          <span class="find-text" id="find-text" aria-live="polite"></span>
+          <button type="button" class="icon-btn" id="find-prev" aria-label="Previous match" title="Previous match (Shift Enter)">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 10l4-4 4 4"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="find-next" aria-label="Next match" title="Next match (Enter)">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="find-close" aria-label="Clear highlights" title="Clear highlights (Esc)">
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+        </div>
         <a class="bar-link" href="#ask" id="ask-jump">Ask</a>
         <button class="icon-btn" id="map-tog" type="button" aria-controls="map" aria-pressed="true" title="Show or hide the map (M)">
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4" cy="4" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="6" cy="12" r="2"/><path d="M5.8 4.7l4.4.9M4.7 5.9l.8 4.2M10.6 7.4l-3.2 3.3"/></svg>
@@ -101,6 +120,7 @@
 
     <!-- Right: the map -->
     <section class="map" id="map" aria-labelledby="h-map">
+      <div class="sizer" id="size-map" role="separator" aria-orientation="vertical" aria-label="Resize the map" tabindex="0" title="Drag to resize, double-click to reset"></div>
       <h2 class="sr-only" id="h-map">Map</h2>
       <div class="map-stage" id="stage">
         <canvas id="graph" role="img" aria-label="Map of the pages around Oak. A page takes a teammate's color when they are working on it. Use the page list for keyboard navigation."></canvas>
