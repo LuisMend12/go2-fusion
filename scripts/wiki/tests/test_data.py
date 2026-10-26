@@ -436,7 +436,7 @@ class TestDiscord(unittest.TestCase):
     def test_review_post_from_filled_template(self):
         kind, payload = dp.build_message("pull_request_target", pr_event(), GRAPH)
         self.assertEqual(kind, "review")
-        self.assertEqual(payload["content"], "**Review requested** from <@123456789>: <https://github.com/x/y/pull/12>")
+        self.assertEqual(payload["content"], "**Review requested by Max** - any teammate can review: <https://github.com/x/y/pull/12>")
         f = fields(payload)
         self.assertEqual(f["Who"], "Max (@maxhawksby)\nMax, review: Luis")
         self.assertEqual(f["What"], "**Object memory**\nRemember objects YOLO has seen.")
@@ -464,10 +464,11 @@ class TestDiscord(unittest.TestCase):
                          ("not filled in", "not filled in", "not filled in", "none listed"))
         self.assertEqual(payload["embeds"][0]["footer"]["text"], "Template not filled in.")
 
-    def test_review_without_reviewer_mentions_page_owners(self):
+    def test_review_asks_the_team_not_one_person(self):
         ev = pr_event(reviewers=(), user={"login": "newbie"})
         _, payload = dp.build_message("pull_request_target", ev, GRAPH)
-        self.assertTrue(payload["content"].startswith("**Review requested** - page owners: <@123456789>"))
+        self.assertTrue(payload["content"].startswith("**Review requested by @newbie** - any teammate can review"))
+        self.assertNotIn("<@", payload["content"])
         self.assertEqual(fields(payload)["Who"], "@newbie\nMax, review: Luis")
         self.assertNotIn("color", payload["embeds"][0])
 
@@ -486,7 +487,7 @@ class TestDiscord(unittest.TestCase):
         last = pr_event("review_requested", reviewers=both)
         last["requested_reviewer"] = {"login": "LuisMend12"}
         self.assertIsNone(post(first))
-        self.assertIn("Max <@123456789>", post(last)[1]["content"])
+        self.assertIn("Review requested by Max", post(last)[1]["content"])
         drafted = pr_event("review_requested", draft=True)
         drafted["requested_reviewer"] = {"login": "LuisMend12"}
         self.assertIsNone(post(drafted))
