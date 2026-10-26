@@ -1,6 +1,6 @@
 # Oak wiki workspace
 
-The wiki is a graph. [README.md](../../README.md) is the center node, Oak. It links to 7 hub pages in [docs/wiki/](../../docs/wiki/), and each hub links to one page per program. The site in `site/` shows it as a workspace: a page tree and search on the left, the page in the middle, a 2D graph on the right, plus who is working on what, recent changes and questions.
+The wiki is a graph. [README.md](../../README.md) is the center node, Oak. It links to 7 hub pages in [docs/wiki/](../../docs/wiki/), and each hub links to one page per program. The site in `site/` shows it as a workspace: a page tree, people and recent changes on the left, the page in the middle, a 2D map on the right (hide it with the map button or `M`), and a quick switcher on `/` or `Ctrl K`. Pages are grey; a page takes a teammate's color while they have open work or an active branch on it. Under each page title are who is working there, the last change and its code; below the page, every page it connects to with the sentence that links them. Clicking a dot on the map or a link in the page opens that page in the middle and moves the map to it.
 
 ## View it locally
 
@@ -19,7 +19,7 @@ The launcher lives in [tools/oak-wiki/](../../tools/oak-wiki/) and uses only wha
 
 Checks and tests: `npm run wiki:check` runs [check_wiki.py](check_wiki.py) (add `-- --base <branch>` to compare with another branch), and `npm test` runs the Python tests plus the launcher's own tests.
 
-Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Open `#people/<id>` (for example `#people/max`) for a teammate's view: focus, open work, active branches, pages they have worked on and their recent changes, with their pages ringed on the map.
+Without `site/graph.json` the app falls back to `site/sample-graph.json`, which has made-up people, work and questions. Open `#people/<id>` (for example `#people/max`) for a teammate's view: focus, open work, active branches, pages they have worked on and their recent changes, with their pages lit up in their color on the map (or press their name under the map).
 
 ## Add a page
 
