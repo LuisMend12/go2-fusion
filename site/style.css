@@ -293,13 +293,14 @@ mark.hit.cur { background: #ffd666; color: #191919; box-shadow: 0 0 0 2px rgba(2
 
 /* ask */
 .ask { margin-top: 56px; scroll-margin-top: 16px; }
-.ask-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.ask-quick { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-bottom: 10px; }
+/* plain text questions, no bubbles */
 .chip {
-  cursor: pointer; padding: 5px 11px; border-radius: 999px; font-size: 13px;
-  background: var(--hover); border: 0; color: var(--text-2);
+  cursor: pointer; padding: 2px 0; border: 0; background: none;
+  font-size: 13px; color: var(--muted);
 }
-.chip:hover { color: var(--text); background: var(--active); }
-.chip[aria-pressed="true"] { color: var(--text-strong); background: var(--line-2); }
+.chip:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.chip[aria-pressed="true"] { color: var(--text-strong); }
 .answer { margin: 4px 0 12px; padding: 4px 0 4px 14px; border-left: 2px solid var(--line-2); font-size: 14px; color: var(--text-2); }
 .answer p { margin: 0 0 6px; }
 .answer ul { margin: 0; padding-left: 18px; }
