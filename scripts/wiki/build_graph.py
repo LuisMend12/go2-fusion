@@ -747,6 +747,7 @@ def build():
     return {
         "version": 2,
         "branch": branch,
+        "base": BASE_REF.rsplit("/", 1)[-1],  # the main branch new work starts from
         "published": published,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "repo": os.environ.get("GITHUB_REPOSITORY") or DEFAULT_REPO,

@@ -92,7 +92,7 @@
           <section class="connections" id="connections" aria-labelledby="h-conn"></section>
           <section class="backlinks" id="backlinks" aria-labelledby="h-back"></section>
           <section class="ask" id="ask" aria-labelledby="h-ask">
-            <h2 id="h-ask">Ask about this page</h2>
+            <h2 id="h-ask">Ask or change this page</h2>
             <div class="ask-quick" role="group" aria-label="Instant answers">
               <button type="button" class="chip" data-q="who">Who is working on this?</button>
               <button type="button" class="chip" data-q="recent">What changed recently?</button>
@@ -100,15 +100,31 @@
             </div>
             <div class="answer" id="answer" aria-live="polite" hidden></div>
             <form class="ask-form" id="ask-form">
-              <label class="sr-only" for="ask-input">Your question</label>
-              <div class="composer">
-                <input id="ask-input" type="text" placeholder="Ask a question, e.g. how do I run this in mock mode?" autocomplete="off">
-                <button type="button" class="btn ghost" id="ask-agent" title="Copies a ready prompt for Claude Code, Codex, or any agent that can read GitHub">Copy for agent</button>
-                <button type="submit" class="btn primary" id="ask-team" title="Opens a GitHub issue for this page in a new tab">Ask the team</button>
+              <div class="quote" id="ask-quote" hidden>
+                <span class="quote-label">About this part:</span>
+                <q class="quote-text" id="ask-quote-text"></q>
+                <button type="button" class="icon-btn" id="ask-quote-x" aria-label="Remove the quoted part">
+                  <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                </button>
               </div>
+              <label class="sr-only" for="ask-input">Your question or the change you want</label>
+              <div class="composer">
+                <input id="ask-input" type="text" placeholder="Ask a question or describe a change. Type [[ to name a page." autocomplete="off"
+                       role="combobox" aria-expanded="false" aria-controls="ask-pages" aria-autocomplete="list">
+                <button type="button" class="btn primary" id="ask-agent">Copy for agent</button>
+              </div>
+              <ul class="ask-pages" id="ask-pages" role="listbox" aria-label="Pages" hidden></ul>
+              <div class="ask-meta">
+                <div class="seg" role="group" aria-label="What the agent should do">
+                  <button type="button" data-mode="ask" aria-pressed="true">Answer a question</button>
+                  <button type="button" data-mode="edit" aria-pressed="false">Edit this page</button>
+                </div>
+                <button type="submit" class="link-btn" id="ask-team" title="Opens a GitHub issue for this page in a new tab">Ask the team instead</button>
+              </div>
+              <p class="hint" id="ask-hint"></p>
               <div class="copy-fallback" id="copy-fallback" hidden>
                 <label for="copy-text">Copy this prompt:</label>
-                <textarea id="copy-text" rows="4" readonly></textarea>
+                <textarea id="copy-text" rows="6" readonly></textarea>
               </div>
               <p class="toast" id="toast" role="status" aria-live="polite"></p>
             </form>
@@ -137,6 +153,8 @@
     </section>
   </div>
   <div class="scrim" id="scrim" hidden></div>
+  <!-- appears over selected page text -->
+  <button type="button" class="sel-ask" id="sel-ask" hidden>Ask agent about this</button>
 
   <!-- Quick switcher: / or Ctrl K -->
   <div class="qs-back" id="qs" hidden>
