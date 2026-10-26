@@ -6,10 +6,10 @@
 #
 # id          short lowercase id used everywhere else in the data
 # github      GitHub login (checked against the repo's commit history)
-# color       that person's color on the site. Readable on the dark
-#             background and kept away from the hub colors (blue, orange,
-#             mint green, cyan, yellow, pink, violet) and Oak's near-white:
-#             red, lime, tan, slate gray, warm ivory.
+# color       that person's color on the site: their pages on the map and
+#             their name everywhere take it. Everything else on the site is
+#             grey, so pick a color that is readable on the dark background
+#             and clearly not grey or white.
 # discord_id  numeric Discord user id, so pings can @mention them.
 #             Empty until filled in (Discord: Settings > Advanced >
 #             Developer Mode, then right-click the name > Copy User ID).

@@ -1,16 +1,12 @@
-/* Oak workspace v2: sidebar (search, page tree, people, recent), reading pane
-   (page, backlinks, ask box, or a teammate's view) and a fixed 2D map.
+/* Oak workspace v3: sidebar (page tree, people, recent), quick switcher,
+   reading pane (page, connections, ask box, or a teammate's view) and a fixed
+   2D map. Pages are grey; a page takes a teammate's color while they work on it.
    Data: graph.json (scripts/wiki/build_graph.py), else sample-graph.json. */
 (function () {
   "use strict";
 
-  const OAK_COLOR = "#f0e6cf";
-  const HUB_COLORS = {
-    driving: "#e39a62", driver: "#78a6e8", senses: "#5fc9a3", "maps-nav": "#d9c160",
-    brains: "#d684bf", "lab-setup": "#67c3d4", team: "#a397e8",
-  };
-  const FALLBACK = ["#e88f86", "#9bd08a", "#d8b4f0", "#8fd3e0", "#e6c27a"];
-  const BG = "#0f0e12";
+  const GREYS = ["#e6e6e6", "#9a9a9a", "#666666"];   // Oak, hubs, pages
+  const BG = "#161616";
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const $ = (id) => document.getElementById(id);
@@ -25,7 +21,7 @@
       else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
       else el.setAttribute(k, v === true ? "" : v);
     }
-    for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
+    for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
     return el;
   }
   const dot = (color) => h("span", { class: "dot", style: "background:" + color, "aria-hidden": "true" });
@@ -56,7 +52,7 @@
     index();
     if (D.nodes.some((n) => typeof n.x !== "number" || typeof n.y !== "number")) layout();
     renderTree(); renderWork(); renderRecent(); renderPeopleList(); renderLegend(); renderDataNote();
-    setupSearch(); setupAsk(); setupDrawer();
+    setupSearch(); setupAsk(); setupDrawer(); setupPanes(); setupFind();
     Graph.init();
     window.addEventListener("hashchange", route);
     route();
@@ -108,12 +104,10 @@
   }
 
   // ---------- colors, people, scope ----------
-  function hubColor(hubId) {
-    if (HUB_COLORS[hubId]) return HUB_COLORS[hubId];
-    const i = Math.max(0, hubs.findIndex((x) => x.id === hubId));
-    return FALLBACK[i % FALLBACK.length];
-  }
-  const nodeColor = (n) => (n.depth === 0 ? OAK_COLOR : hubColor(n.hub));
+  // Color means "who": a page is grey unless someone has open work or an
+  // active branch on it, then it takes that teammate's color.
+  const greyOf = (n) => GREYS[Math.min(n.depth, 2)];
+  const nodeColor = (n) => { const pid = pagePerson(n.id); return pid ? personColor(pid) : greyOf(n); };
   const personColor = (pid) => (people[pid] && people[pid].color) || "#9a958c";
   const personName = (pid, fallback) => (people[pid] && people[pid].name) || fallback || "someone";
   const workPerson = (w) => w.person || w.assignees[0] || null;
@@ -133,8 +127,19 @@
     s.delete("oak");
     return s;
   }
-  const workByPage = {};
-  function workIndex() { D.work.forEach((w) => w.pages.forEach((p) => { (workByPage[p] = workByPage[p] || []).push(w); })); }
+  const workByPage = {}, branchesByPage = {};
+  function workIndex() {
+    D.work.forEach((w) => w.pages.forEach((p) => { (workByPage[p] = workByPage[p] || []).push(w); }));
+    D.branches.forEach((b) => b.pages.forEach((p) => { (branchesByPage[p] = branchesByPage[p] || []).push(b); }));
+  }
+  // everyone working on a page right now: open work first, then active branches
+  function pagePeople(id) {
+    const out = [];
+    (workByPage[id] || []).forEach((w) => { const pid = workPerson(w); if (pid && !out.includes(pid)) out.push(pid); });
+    (branchesByPage[id] || []).forEach((b) => { if (b.person && !out.includes(b.person)) out.push(b.person); });
+    return out;
+  }
+  const pagePerson = (id) => (id === "oak" ? null : pagePeople(id)[0] || null);
 
   // ---------- time ----------
   function rel(iso) {
@@ -221,10 +226,10 @@
     function item(n, level) {
       const children = level > 0 ? kids[n.id] : [];
       const li = h("li", { class: n.depth === 1 ? "t-hub" : null });
-      const w = workByPage[n.id];
+      const pid = pagePerson(n.id);
       const link = h("button", { type: "button", class: "t-link", onclick: () => go(n.id) },
-        dot(nodeColor(n)), h("span", { class: "t-label" }, n.title),
-        w ? h("span", { class: "dot t-work", style: "background:" + personColor(workPerson(w[0])), title: personName(workPerson(w[0])) + " is working on this" }) : null);
+        h("span", { class: "t-label" }, n.title),
+        pid ? h("span", { class: "dot t-work", style: "background:" + personColor(pid), title: personName(pid) + " is working on this" }) : null);
       treeLinks[n.id] = link;
       const row = h("div", { class: "t-row" });
       if (children.length) {
@@ -283,7 +288,7 @@
   }
   function renderRecent() {
     const ul = $("recent");
-    const items = D.recent.slice(0, 12);
+    const items = D.recent.slice(0, 6);
     if (!items.length) { ul.append(h("li", { class: "none" }, "No recent changes recorded.")); return; }
     items.forEach((r) => {
       const first = r.pages.find((p) => byId[p]);
@@ -299,7 +304,7 @@
   function renderDataNote() {
     const el = $("data-note");
     if (D.sample) {
-      el.append(h("span", { class: "pill sample" }, "Sample data"), " People, work, questions and changes are made up until the data builder runs.");
+      el.append(h("span", { class: "pill sample" }, "Sample data."), " People, work and changes are made up until the data builder runs.");
     } else {
       el.append("Built from ", h("code", null, D.branch), D.generated_at ? " " + rel(D.generated_at) : "",
         D.published ? "" : ". Not on GitHub yet.");
@@ -315,7 +320,7 @@
       const b = h("button", { type: "button", class: "p-link", style: "--c:" + p.color, onclick: () => goPerson(p.id) },
         dot(p.color),
         h("span", { class: "p-name" }, p.name),
-        open ? h("span", { class: "p-count", title: open + " open " + (open === 1 ? "item" : "items") }, String(open)) : null,
+        open ? h("span", { class: "p-count", title: open + " open " + (open === 1 ? "item" : "items") }, open + " open") : null,
         p.focus ? h("span", { class: "p-focus" }, p.focus) : null);
       personLinks[p.id] = b;
       ul.append(h("li", null, b));
@@ -331,16 +336,17 @@
     const pre = new URLSearchParams(location.search).get("person");
     if (pre && people[pre] && !location.hash) history.replaceState(null, "", personHash(pre));
   }
+  // map legend: one button per teammate; pressing one lights up their pages
+  let lastPage = "oak";
   function renderLegend() {
     const el = $("legend");
     el.textContent = "";
-    if (filterPerson) {
-      const p = people[filterPerson];
-      const n = personPages(filterPerson).size;
-      el.append(h("span", null, dot(p.color), p.name + (p.focus ? " - " + p.focus : "") + " (" + n + (n === 1 ? " page" : " pages") + ")"));
-      return;
-    }
-    hubs.forEach((hb) => el.append(h("span", null, dot(hubColor(hb.id)), hb.title)));
+    D.people.forEach((p) => {
+      const on = filterPerson === p.id;
+      el.append(h("button", { type: "button", class: "lg", "aria-pressed": String(on),
+        title: on ? "Back to the page you were reading" : "Show " + p.name + "'s pages",
+        onclick: () => (on ? go(lastPage) : goPerson(p.id)) }, dot(p.color), p.name));
+    });
   }
 
   // ---------- search ----------
@@ -351,72 +357,262 @@
   }
   function setupSearch() {
     searchIndex = D.nodes.map((n) => ({ kind: "page", n, title: n.title, text: plain(n.markdown) }))
+      .concat(D.people.map((p) => ({ kind: "Person", person: p, title: p.name, text: p.focus || "" })))
       .concat(D.work.map((w) => ({ kind: w.kind === "pr" ? "Pull request" : "Issue", n: byId[w.pages.find((p) => byId[p])], title: w.title, text: personName(workPerson(w), w.author) })))
       .concat(D.questions.map((q) => ({ kind: "Question", n: byId[q.page], title: q.title, text: q.answer_excerpt || "" })))
-      .filter((e) => e.n);
-    const input = $("search"), list = $("results");
-    let hits = [], sel = 0;
+      .filter((e) => e.n || e.person);
+    const back = $("qs"), input = $("search"), list = $("results");
+    let hits = [], sel = 0, returnTo = null;
+    const parentTitle = (n) => (n.parent && byId[n.parent] ? byId[n.parent].title : "");
     function show() {
       const q = input.value.trim().toLowerCase();
       list.textContent = "";
-      if (!q) { close(); return; }
-      const terms = q.split(/\s+/);
-      hits = searchIndex.map((e) => {
-        const t = e.title.toLowerCase(), b = e.text.toLowerCase();
-        let s = 0;
-        for (const term of terms) {
-          if (t.includes(term)) s += t.startsWith(term) ? 12 : 8;
-          else if (b.includes(term)) s += 2;
-          else return null;
-        }
-        return { e, s: s + (e.kind === "page" ? 1 : 0) };
-      }).filter(Boolean).sort((a, b) => b.s - a.s || a.e.title.localeCompare(b.e.title)).slice(0, 12);
+      const terms = q ? q.split(/\s+/) : [];
+      if (!q) {
+        // empty box: the pages people are working on, then hubs
+        hits = D.nodes.filter((n) => pagePerson(n.id)).concat(hubs).filter((n, i, a) => a.indexOf(n) === i)
+          .slice(0, 10).map((n) => ({ e: { kind: "page", n, title: n.title, text: "" } }));
+      } else {
+        hits = searchIndex.map((e) => {
+          const t = e.title.toLowerCase(), b = e.text.toLowerCase();
+          let s = 0;
+          for (const term of terms) {
+            if (t.includes(term)) s += t.startsWith(term) ? 12 : 8;
+            else if (b.includes(term)) s += 2 + Math.min(b.split(term).length - 2, 5) * 0.3;   // more mentions rank higher
+            else return null;
+          }
+          return { e, s: s + (e.kind === "page" ? 1 : 0) };
+        }).filter(Boolean).sort((a, b) => b.s - a.s || a.e.title.localeCompare(b.e.title)).slice(0, 12);
+      }
       sel = 0;
       if (!hits.length) list.append(h("li", { class: "empty", role: "option", "aria-disabled": "true" }, "No matches"));
       hits.forEach((hit, i) => {
         const e = hit.e;
+        const color = e.person ? e.person.color : pagePerson(e.n.id) ? personColor(pagePerson(e.n.id)) : null;
+        const kind = e.kind === "page" ? parentTitle(e.n) : e.kind;
+        const snip = e.kind === "page" ? (q && !e.title.toLowerCase().includes(terms[0]) ? snippet(e.text, terms[0]) : null)
+          : e.person ? (e.text ? [e.text] : null) : [e.kind + " on " + e.n.title + (e.text ? " - " : ""), ...snippet(e.text, terms[0] || "")];
         const li = h("li", { role: "option", id: "res-" + i, "aria-selected": String(i === 0) },
-          h("span", { class: "r-title" }, dot(nodeColor(e.n)), e.title),
-          h("span", { class: "r-snip" }, e.kind === "page" ? snippet(e.text, terms[0]) : [e.kind + " on " + e.n.title + (e.text ? " - " : ""), ...snippet(e.text, terms[0])]));
+          h("span", { class: "r-title" }, color ? dot(color) : null, mark(e.title, terms[0]), kind ? h("span", { class: "r-kind" }, kind) : null),
+          snip ? h("span", { class: "r-snip" }, snip) : null);
         li.addEventListener("mousedown", (ev) => { ev.preventDefault(); pick(i); });
+        li.addEventListener("mousemove", () => { if (sel !== i) { sel = i; paint(); } });
         list.append(li);
       });
-      list.hidden = false;
       input.setAttribute("aria-expanded", "true");
       input.setAttribute("aria-activedescendant", hits.length ? "res-0" : "");
     }
+    function mark(text, term) {
+      const i = term ? text.toLowerCase().indexOf(term) : -1;
+      if (i < 0) return h("span", null, text);
+      return h("span", null, text.slice(0, i), h("mark", null, text.slice(i, i + term.length)), text.slice(i + term.length));
+    }
     function snippet(text, term) {
-      const i = text.toLowerCase().indexOf(term);
+      const i = term ? text.toLowerCase().indexOf(term) : -1;
       if (i < 0) return [text.slice(0, 90) + (text.length > 90 ? "..." : "")];
       const a = Math.max(0, i - 40), b = Math.min(text.length, i + term.length + 60);
       return [(a ? "..." : "") + text.slice(a, i), h("mark", null, text.slice(i, i + term.length)), text.slice(i + term.length, b) + (b < text.length ? "..." : "")];
     }
+    function paint() {
+      list.querySelectorAll("li").forEach((li, i) => li.setAttribute("aria-selected", String(i === sel)));
+      input.setAttribute("aria-activedescendant", "res-" + sel);
+    }
     function move(d) {
       if (!hits.length) return;
       sel = (sel + d + hits.length) % hits.length;
-      list.querySelectorAll("li").forEach((li, i) => li.setAttribute("aria-selected", String(i === sel)));
-      input.setAttribute("aria-activedescendant", "res-" + sel);
+      paint();
       const li = $("res-" + sel); if (li) li.scrollIntoView({ block: "nearest" });
     }
-    function pick(i) { const hit = hits[i]; if (!hit) return; close(); input.value = ""; go(hit.e.n.id); }
-    function close() { list.hidden = true; input.setAttribute("aria-expanded", "false"); }
+    function pick(i) {
+      const hit = hits[i]; if (!hit) return;
+      const q = input.value.trim();
+      close(true);
+      if (hit.e.person) { goPerson(hit.e.person.id); return; }
+      if (q && hit.e.kind === "page") pendingFind = q;
+      go(hit.e.n.id);
+    }
+    function open() {
+      if (!back.hidden) return;
+      returnTo = document.activeElement;
+      closeDrawer();
+      back.hidden = false; input.value = ""; show(); input.focus();
+    }
+    function close(picked) {
+      if (back.hidden) return;
+      back.hidden = true; input.setAttribute("aria-expanded", "false");
+      if (!picked && returnTo && returnTo.focus) returnTo.focus();
+    }
+    $("search-open").addEventListener("click", open);
+    back.addEventListener("mousedown", (e) => { if (e.target === back) close(); });
     input.addEventListener("input", show);
-    input.addEventListener("focus", () => { if (input.value.trim()) show(); });
-    input.addEventListener("blur", () => setTimeout(close, 100));
     input.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
       else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
       else if (e.key === "Enter") { e.preventDefault(); pick(sel); }
-      else if (e.key === "Escape") { input.value = ""; close(); input.blur(); }
+      else if (e.key === "Escape") { e.preventDefault(); close(); }
+      else if (e.key === "Tab") e.preventDefault();
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target;
-      if (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-      e.preventDefault();
-      openDrawer();
-      input.focus();
+      const typing = t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); if (back.hidden) open(); else close(); return; }
+      if (!back.hidden || typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "/") { e.preventDefault(); open(); }
+      else if (e.key === "m" || e.key === "M") toggleMap();
+      else if (e.key === "[") toggleSide();
+      else if (find.marks.length && e.key === "Escape") clearFind();
+      else if (find.marks.length && e.key === "Enter" && !/^(A|BUTTON)$/.test(t.tagName)) { e.preventDefault(); showMatch(find.i + (e.shiftKey ? -1 : 1)); }
     });
+  }
+
+  // ---------- panes: show/hide and drag to resize (remembered per browser) ----------
+  function store(k, v) {
+    try {
+      if (v === undefined) return localStorage.getItem(k);
+      if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v);
+    } catch (e) { /* private mode: nothing is remembered */ }
+    return null;
+  }
+  const SIDE = { min: 180, max: 480 }, READER_MIN = 360, MAP_MIN = 240;
+  function setMap(show) {
+    $("app").classList.toggle("no-map", !show);
+    $("map-tog").setAttribute("aria-pressed", String(show));
+    store("oak.map", show ? "1" : "0");
+    clampPanes();
+  }
+  function toggleMap() { setMap($("app").classList.contains("no-map")); }
+  function setSide(show, quiet) {
+    $("app").classList.toggle("no-side", !show);
+    $("side-show").hidden = show;
+    store("oak.side", show ? "1" : "0");
+    clampPanes();
+    if (quiet) return;
+    // keep keyboard focus on the button that brings it back
+    (show ? $("side-hide") : $("side-show")).focus({ preventScroll: true });
+  }
+  function toggleSide() { setSide($("app").classList.contains("no-side")); }
+  const paneW = (name) => parseFloat($("app").style.getPropertyValue("--" + name + "-w")) || null;
+  function setPaneW(name, px) {
+    if (px == null) { $("app").style.removeProperty("--" + name + "-w"); store("oak." + name + "W", null); return; }
+    $("app").style.setProperty("--" + name + "-w", Math.round(px) + "px");
+    store("oak." + name + "W", String(Math.round(px)));
+  }
+  // keep the reader at least READER_MIN wide when the window shrinks
+  function clampPanes() {
+    const app = $("app"), W = app.clientWidth;
+    const sideOn = !app.classList.contains("no-side"), mapOn = !app.classList.contains("no-map");
+    const side = sideOn ? $("side").getBoundingClientRect().width : 0;
+    const sw = paneW("side");
+    if (sw) app.style.setProperty("--side-w", Math.max(SIDE.min, Math.min(SIDE.max, sw)) + "px");
+    const mw = paneW("map");
+    if (mw && mapOn) app.style.setProperty("--map-w", Math.max(MAP_MIN, Math.min(W - side - READER_MIN, mw)) + "px");
+  }
+  function bindSizer(el, name) {
+    const app = $("app");
+    const limits = () => {
+      const W = app.clientWidth;
+      const side = app.classList.contains("no-side") ? 0 : $("side").getBoundingClientRect().width;
+      const map = app.classList.contains("no-map") ? 0 : $("map").getBoundingClientRect().width;
+      return name === "side" ? [SIDE.min, Math.min(SIDE.max, W - map - READER_MIN)] : [MAP_MIN, W - side - READER_MIN];
+    };
+    const current = () => (name === "side" ? $("side") : $("map")).getBoundingClientRect().width;
+    const set = (px) => { const [lo, hi] = limits(); setPaneW(name, Math.max(lo, Math.min(hi, px))); };
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      el.classList.add("dragging"); document.body.classList.add("resizing");
+      const r = app.getBoundingClientRect();
+      const move = (ev) => set(name === "side" ? ev.clientX - r.left : r.right - ev.clientX);
+      const up = () => {
+        el.classList.remove("dragging"); document.body.classList.remove("resizing");
+        el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
+      };
+      el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+    });
+    el.addEventListener("dblclick", () => setPaneW(name, null));
+    el.addEventListener("keydown", (e) => {
+      // arrows move the edge; for the map, left makes it wider
+      const step = e.shiftKey ? 64 : 16, dir = name === "side" ? 1 : -1;
+      if (e.key === "ArrowLeft") { e.preventDefault(); set(current() - step * dir); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); set(current() + step * dir); }
+      else if (e.key === "Home" || e.key === "Enter") { e.preventDefault(); setPaneW(name, null); }
+    });
+  }
+  function setupPanes() {
+    ["side", "map"].forEach((name) => { const w = parseFloat(store("oak." + name + "W")); if (w) $("app").style.setProperty("--" + name + "-w", w + "px"); });
+    setSide(store("oak.side") !== "0", true);
+    setMap(store("oak.map") !== "0");
+    $("map-tog").addEventListener("click", toggleMap);
+    $("side-hide").addEventListener("click", () => setSide(false));
+    $("side-show").addEventListener("click", () => setSide(true));
+    bindSizer($("size-side"), "side");
+    bindSizer($("size-map"), "map");
+    window.addEventListener("resize", clampPanes);
+  }
+
+  // ---------- find: highlight a search inside the open page ----------
+  // Opening a search result scrolls to the first place the words appear and
+  // marks every match; Enter / Shift+Enter step through them, Esc clears.
+  let pendingFind = null;
+  const find = { term: "", marks: [], i: 0 };
+  function clearFind() {
+    find.marks.forEach((m) => { const t = document.createTextNode(m.textContent); m.replaceWith(t); t.parentNode && t.parentNode.normalize(); });
+    find.marks = []; find.term = ""; find.i = 0;
+    $("find").hidden = true;
+  }
+  function findInPage(query) {
+    clearFind();
+    const root = $("content");
+    const q = query.trim().toLowerCase();
+    if (!q) return;
+    // whole phrase first; if it is not on the page, the longest single word
+    const texts = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (t) => (t.nodeValue.trim() && !t.parentElement.closest(".props, script, style") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    });
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) texts.push(t);
+    const has = (term) => texts.some((t) => t.nodeValue.toLowerCase().includes(term));
+    let term = q;
+    if (!has(term)) term = q.split(/\s+/).filter(has).sort((a, b) => b.length - a.length)[0];
+    if (!term) return;
+    texts.forEach((t) => {
+      const low = t.nodeValue.toLowerCase();
+      let at = low.indexOf(term);
+      if (at < 0) return;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      while (at >= 0 && find.marks.length < 300) {
+        frag.append(t.nodeValue.slice(last, at));
+        const m = h("mark", { class: "hit" }, t.nodeValue.slice(at, at + term.length));
+        find.marks.push(m); frag.append(m);
+        last = at + term.length;
+        at = low.indexOf(term, last);
+      }
+      frag.append(t.nodeValue.slice(last));
+      t.replaceWith(frag);
+    });
+    if (!find.marks.length) return;
+    find.term = term;
+    // start at the first match in the text, not the page title
+    const first = find.marks.findIndex((m) => !m.closest("h1"));
+    showMatch(first < 0 ? 0 : first);
+  }
+  function showMatch(i) {
+    if (!find.marks.length) return;
+    find.i = (i + find.marks.length) % find.marks.length;
+    find.marks.forEach((m, j) => m.classList.toggle("cur", j === find.i));
+    const m = find.marks[find.i];
+    m.scrollIntoView({ block: "center", behavior: reduceMotion.matches ? "auto" : "smooth" });
+    const t = $("find-text");
+    t.textContent = "";
+    t.append("\u201c", h("b", null, find.term), "\u201d  " + (find.i + 1) + " of " + find.marks.length);
+    $("find").hidden = false;
+  }
+  function setupFind() {
+    $("find-next").addEventListener("click", () => showMatch(find.i + 1));
+    $("find-prev").addEventListener("click", () => showMatch(find.i - 1));
+    $("find-close").addEventListener("click", clearFind);
   }
 
   // ---------- routing ----------
@@ -437,6 +633,7 @@
     const n = byId[id] || oak;
     if (!n) return;
     if (current !== n) openPage(n);
+    if (pendingFind) { const q = pendingFind; pendingFind = null; findInPage(q); return; }
     if (anchor) {
       const el = document.getElementById(anchor);
       if (el && $("content").contains(el)) el.scrollIntoView({ behavior: reduceMotion.matches ? "auto" : "smooth", block: "start" });
@@ -455,15 +652,18 @@
   function openPage(n) {
     const first = !current && !filterPerson && !viewedPerson;
     current = n;
+    lastPage = n.id;
     viewedPerson = null;
     setMode(null);
     document.title = n.depth === 0 ? "Oak Workspace" : n.title + " - Oak Workspace";
     Object.entries(treeLinks).forEach(([id, el]) => { if (id === n.id) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current"); });
     if (n.hub && n.depth > 1) setOpen(n.hub, true);
     if (n.depth === 1) setOpen(n.id, true);
-    const tl = treeLinks[n.id]; if (tl) tl.scrollIntoView({ block: "nearest" });
+    const narrow = window.matchMedia("(max-width: 900px)").matches;
+    const tl = treeLinks[n.id]; if (tl && !narrow) tl.scrollIntoView({ block: "nearest" });
 
-    renderCrumbs(n); renderBanner(n); renderContent(n); renderMeta(n); renderBacklinks(n); renderSaved(n); resetAsk();
+    clearFind();
+    renderCrumbs(n); renderContent(n); renderProps(n); renderConnections(n); renderBacklinks(n); renderSaved(n); resetAsk();
 
     const page = $("page");
     page.classList.remove("enter"); void page.offsetWidth; page.classList.add("enter");
@@ -477,16 +677,17 @@
     const first = !current && !viewedPerson;
     current = null;
     viewedPerson = p;
+    clearFind();
     setMode(p.id);
     document.title = p.name + " - Oak Workspace";
     Object.values(treeLinks).forEach((el) => el.removeAttribute("aria-current"));
-    const pl = personLinks[p.id]; if (pl) pl.scrollIntoView({ block: "nearest" });
+    const pl = personLinks[p.id]; if (pl && !window.matchMedia("(max-width: 900px)").matches) pl.scrollIntoView({ block: "nearest" });
 
     const nav = $("crumbs");
     nav.textContent = "";
     nav.append(h("button", { type: "button", onclick: () => go("people") }, "People"),
       h("span", { class: "sep", "aria-hidden": "true" }, "/"), h("span", { "aria-current": "page" }, p.name));
-    ["banner", "meta", "backlinks", "saved"].forEach((id) => { $(id).textContent = ""; });
+    ["connections", "backlinks", "saved"].forEach((id) => { $(id).textContent = ""; });
 
     const el = $("content");
     el.textContent = "";
@@ -534,9 +735,8 @@
     el.append(sec("Has worked on", worked.length, worked.length
       ? h("ul", { class: "pv-grid" }, worked.map((id) => {
           const b = byId[id];
-          return h("li", null, h("button", { type: "button", class: "bl", onclick: () => go(id) },
-            h("span", { class: "bl-t" }, dot(nodeColor(b)), b.title, past.has(id) ? h("span", { class: "tag draft" }, "earlier work") : null),
-            b.summary ? h("span", { class: "bl-s" }, b.summary) : null));
+          return h("li", null, h("button", { type: "button", class: "bl", onclick: () => go(id), title: b.summary || null },
+            b.title, past.has(id) ? h("span", { class: "tag draft" }, "earlier work") : null));
         }))
       : h("p", { class: "pv-none" }, "No pages yet. Commits to a page or its code show up here.")));
 
@@ -571,24 +771,84 @@
     });
   }
 
-  function renderBanner(n) {
-    const box = $("banner");
-    box.textContent = "";
-    (workByPage[n.id] || []).forEach((w) => {
+  // properties under the title: who is working here, open work, last change, code
+  function renderProps(n) {
+    const rows = [];
+    const row = (label, ...lines) => { if (lines.some(Boolean)) rows.push(h("dt", null, label), h("dd", null, ...lines.filter(Boolean))); };
+    const who = (pid, fallback) => h("span", { class: "who", style: "color:" + personColor(pid) }, personName(pid, fallback));
+    const ext = (label, url) => (D.published ? h("a", { href: url, target: "_blank", rel: "noopener" }, label) : h("span", { class: "off", title: "Not on GitHub yet" }, label));
+
+    // one line per item, newest first; long lists fold after 3
+    const works = (workByPage[n.id] || []).slice().sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+    const workLines = works.map((w) => {
       const pid = workPerson(w);
-      const others = w.assignees.filter((a) => a !== pid).map((a) => personName(a));
-      box.append(h("div", { class: "banner", style: "--c:" + personColor(pid) },
-        dot(personColor(pid)),
-        h("div", null,
-          h("div", null, h("strong", null, personName(pid, w.author)), others.length ? " and " + others.join(", ") : "",
-            w.kind === "pr" ? (w.review_requested ? " wants a review on this page's code" : " has a pull request open here")
-              : " is working on this"),
-          h("div", { class: "b-line" },
-            h("a", { href: w.url, target: "_blank", rel: "noopener" }, (w.kind === "pr" ? "PR" : "Issue") + " #" + w.number + ": " + w.title),
-            w.review_requested ? h("span", { class: "tag" }, "review requested") : null,
-            w.draft ? h("span", { class: "tag draft" }, "draft") : null,
-            h("span", null, rel(w.updated_at))))));
+      const names = [pid].concat(w.assignees.filter((a) => a !== pid));
+      return h("div", { class: "line one", title: w.title },
+        dot(personColor(pid)), names.map((a, i) => [i ? ", " : "", who(a, i ? null : w.author)]), " · ",
+        h("a", { href: w.url, target: "_blank", rel: "noopener" }, (w.kind === "pr" ? "PR" : "Issue") + " #" + w.number + " " + w.title),
+        w.review_requested ? h("span", { class: "tag" }, "wants review") : null,
+        w.draft ? h("span", { class: "tag draft" }, "draft") : null);
     });
+    if (workLines.length > 3) {
+      const rest = workLines.splice(3);
+      rest.forEach((l) => { l.hidden = true; });
+      const more = h("button", { type: "button", class: "more", onclick: () => { rest.forEach((l) => { l.hidden = false; }); more.remove(); } },
+        rest.length + " more");
+      workLines.push(...rest, more);
+    }
+    row("Open work", ...workLines);
+    const bs = (branchesByPage[n.id] || []).filter((b) => !b.pr || !works.some((w) => w.number === b.pr.number));
+    row("Branches", ...bs.map((b) => h("div", { class: "line" }, dot(personColor(b.person)), who(b.person), " on ",
+      D.published ? h("a", { href: branchUrl(b.name), target: "_blank", rel: "noopener" }, h("code", null, b.name)) : h("code", null, b.name),
+      " ", h("span", { class: "off" }, "pushed " + rel(b.last_commit.date)))));
+    const lc = n.last_change;
+    if (lc && (lc.date || lc.message)) {
+      row("Last change", h("div", { class: "line" }, who(lc.person, lc.author), " " + rel(lc.date) + (lc.message ? ": " + lc.message : ""),
+        lc.sha ? [" ", h("code", null, lc.sha.slice(0, 7))] : null));
+    }
+    if (n.code.length) row("Code", h("div", { class: "line" }, n.code.map((c, i) => [i ? ", " : "", ext(codeDir(c), treeUrl(c))])));
+    if (n.path) row("Source", h("div", { class: "line" }, ext(n.path, blobUrl(n.path)),
+      D.published ? null : h("span", { class: "off" }, " (branch " + D.branch + " is not on GitHub yet)")));
+    if (!rows.length) return;
+    const dl = h("dl", { class: "props", "aria-label": "About this page" }, rows);
+    const h1 = $("content").querySelector("h1");
+    if (h1) h1.after(dl); else $("content").prepend(dl);
+  }
+
+  // Connections: every page this one links to, with the sentence the link sits
+  // in (what the link is about) and who is working on that page.
+  function renderConnections(n) {
+    const box = $("connections");
+    box.textContent = "";
+    const seen = new Set([n.id]), items = [];
+    const md = n.markdown.replace(/^---\n[\s\S]*?\n---\n/, "").replace(/```[\s\S]*?```/g, "");
+    md.split("\n").forEach((line) => {
+      const re = /\[([^\]]*)\]\(([^)\s]+)\)/g;
+      let m;
+      while ((m = re.exec(line))) {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(m[2]) || m[2].startsWith("#")) continue;
+        const page = byPath[resolvePath(n.path || "", m[2].split("#")[0])];
+        if (!page || seen.has(page.id)) continue;
+        seen.add(page.id);
+        let about = line.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/<[^>]+>/g, " ").replace(/\*\*|__|`/g, "")
+          .replace(/^\s*(?:[-+*]|\d+[.)]|#+|>)\s*/, "").replace(/\s+/g, " ").trim();
+        if (/^part of:/i.test(about)) about = "The section this page belongs to.";
+        else if (about === page.title || about.length < page.title.length + 4) about = page.summary || "";
+        if (about.length > 180) about = about.slice(0, 177).replace(/\s+\S*$/, "") + "...";
+        items.push({ page, about });
+      }
+    });
+    if (!items.length) return;
+    box.append(h("h2", { id: "h-conn" }, "Connects to " + items.length + (items.length === 1 ? " page" : " pages")));
+    box.append(h("ul", { class: "conn" }, items.map(({ page, about }) => {
+      const ps = pagePeople(page.id);
+      return h("li", null, h("button", { type: "button", class: "cn", onclick: () => go(page.id),
+        onmouseenter: () => Graph.peek(page), onmouseleave: () => Graph.peek(null) },
+        h("span", { class: "cn-t" }, ps.length ? dot(personColor(ps[0])) : null, page.title),
+        h("span", { class: "cn-s" }, about,
+          ps.length ? [about ? " · " : "", ps.map((pid, i) => [i ? ", " : "", h("span", { class: "who", style: "color:" + personColor(pid) }, personName(pid))]),
+            " working here"] : null)));
+    })));
   }
 
   function slugger() {
@@ -606,7 +866,8 @@
     el.innerHTML = window.marked ? window.marked.parse(md) : "";
     if (!window.marked) el.append(h("pre", null, md));
     const slug = slugger();
-    el.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((hd) => { hd.id = slug(hd.textContent); });
+    // no id on the title: it would match the page's own #slug and make the browser jump past it
+    el.querySelectorAll("h2,h3,h4,h5,h6").forEach((hd) => { hd.id = slug(hd.textContent); });
     el.querySelectorAll("a[href]").forEach((a) => {
       const href = a.getAttribute("href");
       if (href.startsWith("#")) { a.setAttribute("href", pageHash(n.id, href.slice(1))); return; }
@@ -629,41 +890,14 @@
     });
   }
 
-  function ghLink(label, url, sub) {
-    if (D.published) return h("a", { class: "btn", href: url, target: "_blank", rel: "noopener" }, label, sub ? h("code", null, sub) : null);
-    return h("span", { class: "btn", role: "link", "aria-disabled": "true", title: "Not on GitHub yet" }, label, sub ? h("code", null, sub) : null);
-  }
-
-  function renderMeta(n) {
-    const box = $("meta");
-    box.textContent = "";
-    const lc = n.last_change;
-    if (lc && (lc.date || lc.message)) {
-      box.append(h("div", { class: "changed" }, dot(personColor(lc.person)),
-        h("span", null, "Last changed by ", h("strong", { style: "color:" + personColor(lc.person) }, personName(lc.person, lc.author)),
-          " " + rel(lc.date) + (lc.message ? ": " + lc.message : ""), " ", lc.sha ? h("code", null, lc.sha.slice(0, 7)) : null)));
-    }
-    const links = h("div", { class: "links" });
-    if (n.path) links.append(ghLink("Open in GitHub", blobUrl(n.path)));
-    n.code.forEach((c) => links.append(ghLink("Open code folder", treeUrl(c), codeDir(c))));
-    if (links.childNodes.length) box.append(links);
-    if (!D.published) box.append(h("p", { class: "note" }, "Not on GitHub yet: the branch ", h("code", null, D.branch), " has not been pushed, so these links are turned off."));
-  }
-
   function renderBacklinks(n) {
     const box = $("backlinks");
     box.textContent = "";
     const list = n.backlinks.filter((id) => byId[id] && id !== n.id);
     if (!list.length) return;
-    box.append(h("h2", { id: "h-back" }, "Linked from"));
-    const ul = h("ul");
-    list.forEach((id) => {
-      const b = byId[id];
-      ul.append(h("li", null, h("button", { type: "button", class: "bl", onclick: () => go(id) },
-        h("span", { class: "bl-t" }, dot(nodeColor(b)), b.title),
-        b.summary ? h("span", { class: "bl-s" }, b.summary) : null)));
-    });
-    box.append(ul);
+    box.append(h("h2", { id: "h-back" }, "Linked from " + list.length + (list.length === 1 ? " page" : " pages")));
+    box.append(h("p", null, list.map((id, i) => [i ? ", " : "",
+      h("button", { type: "button", onclick: () => go(id), title: byId[id].summary || null }, byId[id].title)])));
   }
 
   // ---------- ask box ----------
@@ -781,7 +1015,7 @@
     $("side").classList.remove("open"); $("scrim").hidden = true; $("side-open").setAttribute("aria-expanded", "false");
   }
   function setupDrawer() {
-    $("side-open").addEventListener("click", () => { openDrawer(); $("search").focus(); });
+    $("side-open").addEventListener("click", () => { openDrawer(); $("side-close").focus(); });
     $("side-close").addEventListener("click", () => { closeDrawer(); $("side-open").focus(); });
     $("scrim").addEventListener("click", closeDrawer);
     $("home").addEventListener("click", () => go("oak"));
@@ -793,8 +1027,7 @@
     const cv = $("graph"), ctx = cv.getContext("2d"), tip = $("tip");
     let W = 0, H = 0, dpr = 1, fitK = 1, ready = false;
     const cam = { x: 0, y: 0, k: 1 };
-    let hover = null, anim = null, raf = 0;
-    const halos = [];
+    let hover = null, peeked = null, anim = null, raf = 0;
 
     const toScreen = (x, y) => [(x - cam.x) * cam.k + W / 2, (y - cam.y) * cam.k + H / 2];
     const toWorld = (sx, sy) => [(sx - W / 2) / cam.k + cam.x, (sy - H / 2) / cam.k + cam.y];
@@ -825,13 +1058,6 @@
     }
 
     function init() {
-      hubs.forEach((hb) => {
-        const members = descendants(hb.id).map((id) => byId[id]);
-        const cx = members.reduce((s, m) => s + m.x, 0) / members.length;
-        const cy = members.reduce((s, m) => s + m.y, 0) / members.length;
-        const r = Math.max(...members.map((m) => Math.hypot(m.x - cx, m.y - cy))) + 46;
-        halos.push({ hub: hb.id, x: cx, y: cy, r });
-      });
       new ResizeObserver(resize).observe(cv);
       if (document.fonts) document.fonts.ready.then(draw);
       bindPointer();
@@ -882,7 +1108,7 @@
     // ---- drawing ----
     function radius(n) {
       const s = Math.max(0.85, Math.min(1.9, Math.sqrt(cam.k / fitK)));
-      return (n.depth === 0 ? 13 : n.depth === 1 ? 8.5 : 4.6) * s;
+      return (n.depth === 0 ? 10 : n.depth === 1 ? 6.5 : 4.2) * s;
     }
     function draw() {
       if (!W || !D) return;
@@ -896,16 +1122,7 @@
       const isLit = (id) => (pf ? pf.has(id) || id === cur : lit.has(id));
       const dimAll = !!pf || (cur && cur !== "oak");
 
-      // hub halos
-      halos.forEach((hl) => {
-        const [x, y] = toScreen(hl.x, hl.y), r = hl.r * cam.k;
-        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-        const c = hubColor(hl.hub);
-        g.addColorStop(0, hexA(c, pf ? 0.04 : 0.11)); g.addColorStop(0.7, hexA(c, pf ? 0.02 : 0.05)); g.addColorStop(1, hexA(c, 0));
-        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      });
-
-      // edges
+      // edges: grey; the current page's links light up, a teammate's in their color
       ctx.lineCap = "round";
       D.edges.forEach((e) => {
         const a = byId[e.source], b = byId[e.target];
@@ -913,69 +1130,47 @@
         const hot = cur && !pf && (e.source === cur || e.target === cur);
         const pfHot = pf && pf.has(e.source) && pf.has(e.target);
         const [x1, y1] = toScreen(a.x, a.y), [x2, y2] = toScreen(b.x, b.y);
-        const col = e.kind === "parent" ? nodeColor(b.depth ? b : a) : "#a8a196";
-        let alpha = e.kind === "parent" ? 0.42 : 0.2;
-        if (dimAll) alpha *= 0.35;
-        if (hot) alpha = 0.95;
-        if (pfHot) alpha = 0.8;
-        ctx.strokeStyle = hexA(pfHot ? pcol : col, alpha);
-        ctx.lineWidth = hot ? 1.8 : e.kind === "parent" ? 1.1 : 0.9;
-        ctx.setLineDash(e.kind === "link" ? [3, 4] : []);
+        let col = e.kind === "parent" ? "rgba(255,255,255,.13)" : "rgba(255,255,255,.07)";
+        if (dimAll) col = e.kind === "parent" ? "rgba(255,255,255,.07)" : "rgba(255,255,255,.04)";
+        if (hot) col = peeked && (e.source === peeked.id || e.target === peeked.id) ? "rgba(255,255,255,.85)" : "rgba(255,255,255,.26)";
+        if (pfHot) col = hexA(pcol, 0.35);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = hot ? 1.4 : 1;
+        ctx.setLineDash(e.kind === "link" && !hot && !pfHot ? [2, 4] : []);
         ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
       });
       ctx.setLineDash([]);
 
-      // nodes
+      // nodes: grey, or the color of the teammate working there
       const order = D.nodes.slice().sort((a, b) => b.depth - a.depth);
       order.forEach((n) => {
         const [x, y] = toScreen(n.x, n.y), r = radius(n);
-        const on = !dimAll || isLit(n.id) || hover === n;
-        const col = nodeColor(n);
-        if (n.id === cur) {
-          const g = ctx.createRadialGradient(x, y, r, x, y, r * 3.2);
-          g.addColorStop(0, hexA(col, 0.45)); g.addColorStop(1, hexA(col, 0));
-          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3.2, 0, Math.PI * 2); ctx.fill();
-        }
-        if (n.depth === 0) {
-          const g = ctx.createRadialGradient(x, y, r, x, y, r * 3);
-          g.addColorStop(0, "rgba(240,230,207,.22)"); g.addColorStop(1, "rgba(240,230,207,0)");
-          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3, 0, Math.PI * 2); ctx.fill();
-        }
-        ctx.globalAlpha = on ? 1 : 0.22;
-        ctx.fillStyle = col;
+        const on = !dimAll || isLit(n.id) || hover === n || peeked === n;
+        ctx.globalAlpha = on ? 1 : 0.3;
+        ctx.fillStyle = pf ? (pf.has(n.id) ? pcol : greyOf(n)) : nodeColor(n);
         ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-        if (pf && pf.has(n.id)) {
-          ctx.strokeStyle = pcol; ctx.lineWidth = 2.5;
-          ctx.beginPath(); ctx.arc(x, y, r + 4, 0, Math.PI * 2); ctx.stroke();
-        }
-        if (n.id === cur) {
-          ctx.strokeStyle = "#fffaf0"; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.arc(x, y, r + 3, 0, Math.PI * 2); ctx.stroke();
-        }
-        const w = workByPage[n.id];
-        if (w && !pf) {
-          ctx.fillStyle = personColor(workPerson(w[0]));
-          ctx.strokeStyle = BG; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.arc(x + r * 0.85, y - r * 0.85, 3.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        if (n.id === cur || peeked === n) {
+          ctx.strokeStyle = n.id === cur ? "#ffffff" : "rgba(255,255,255,.6)"; ctx.lineWidth = 1.6;
+          ctx.beginPath(); ctx.arc(x, y, r + 3.5, 0, Math.PI * 2); ctx.stroke();
         }
         ctx.globalAlpha = 1;
       });
 
-      // labels
+      // labels: Oak and hubs always, pages when zoomed in or connected
       const showPages = cam.k >= fitK * 1.55;
       ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.lineJoin = "round";
       order.slice().reverse().forEach((n) => {
-        const hot = n.id === cur || hover === n || (pf ? pf.has(n.id) : lit.has(n.id) && cur !== "oak");
+        const hot = n.id === cur || hover === n || peeked === n || (pf ? pf.has(n.id) : lit.has(n.id) && cur !== "oak");
         if (n.depth === 2 && !showPages && !hot) return;
         const [x, y] = toScreen(n.x, n.y), r = radius(n);
-        const on = !dimAll || isLit(n.id) || hover === n;
-        const size = n.depth === 0 ? 15 : n.depth === 1 ? 13 : 11.5;
-        const weight = n.depth === 2 && n.id !== cur ? 400 : 600;
-        ctx.font = weight + " " + size + 'px "IBM Plex Sans", system-ui, sans-serif';
+        const on = !dimAll || isLit(n.id) || hover === n || peeked === n;
+        const size = n.depth === 0 ? 14 : n.depth === 1 ? 12.5 : 11.5;
+        const weight = n.id === cur || n.depth === 0 ? 600 : n.depth === 1 ? 500 : 400;
+        ctx.font = weight + " " + size + 'px "Inter", system-ui, sans-serif';
         ctx.lineWidth = 4; ctx.strokeStyle = BG;
-        ctx.strokeText(n.title, x, y + r + 4);
-        ctx.fillStyle = on ? (n.depth === 2 ? "#d6d1c7" : "#f2ede4") : "rgba(214,209,199,.3)";
-        ctx.fillText(n.title, x, y + r + 4);
+        ctx.strokeText(n.title, x, y + r + 5);
+        ctx.fillStyle = !on ? "rgba(200,200,200,.28)" : n.id === cur ? "#ffffff" : n.depth === 2 ? "#a8a8a8" : "#d0d0d0";
+        ctx.fillText(n.title, x, y + r + 5);
       });
     }
 
@@ -1046,9 +1241,12 @@
     function showTip(n, p) {
       tip.textContent = "";
       tip.append(h("strong", null, n.title));
-      const w = workByPage[n.id];
       if (n.summary) tip.append(h("span", null, n.summary));
-      if (w) tip.append(h("div", { style: "margin-top:4px;color:" + personColor(workPerson(w[0])) }, personName(workPerson(w[0]), w[0].author) + " is working here"));
+      const ps = pagePeople(n.id);
+      if (ps.length) tip.append(h("span", { class: "tip-meta" }, ps.map((pid, i) => [i ? ", " : "",
+        h("span", { style: "color:" + personColor(pid) + ";font-weight:500" }, personName(pid))]), " working here"));
+      const k = nbrs[n.id] ? nbrs[n.id].size : 0;
+      tip.append(h("span", { class: "tip-meta" }, k + (k === 1 ? " connection" : " connections") + " · click to open"));
       tip.hidden = false;
       const tw = tip.offsetWidth, th = tip.offsetHeight;
       tip.style.left = Math.min(W - tw - 8, Math.max(8, p[0] + 14)) + "px";
@@ -1062,6 +1260,9 @@
       if (instant) { Object.assign(cam, computeFit()); draw(); } else animateTo(computeFit());
     }
 
-    return { init, focus, draw, fit };
+    // light up a page from the reader (hovering a connection)
+    function peek(n) { if (peeked !== n) { peeked = n; draw(); } }
+
+    return { init, focus, draw, fit, peek };
   })();
 })();
