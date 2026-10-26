@@ -298,12 +298,6 @@ def _review(event, graph):
     else:
         wiki = sec.get("wiki") or "none listed"
 
-    author_id = (person or {}).get("id")
-    named = [mention(person_by(graph, login=r), r) for r in reviewers]
-    reviewer_ids = {(person_by(graph, login=r) or {}).get("id") for r in reviewers}
-    extra = [] if named else [mention(person_by(graph, pid=p))
-                              for p in owners(graph, pages, exclude={author_id} | reviewer_ids)]
-
     fields = [
         {"name": "Who", "value": _short(who), "inline": False},
         {"name": "What", "value": _short(what), "inline": False},
@@ -321,12 +315,9 @@ def _review(event, graph):
     if color is not None:
         embed["color"] = color
 
-    if named:
-        head = "**Review requested** from " + " ".join(named)
-    elif extra:
-        head = "**Review requested** - page owners: " + " ".join(extra)
-    else:
-        head = "**Review requested**"
+    # Reviews go to the whole team, never one person: anyone can pick it up.
+    asker = (person or {}).get("name") or (f"@{author}" if author else "someone")
+    head = f"**Review requested by {asker}** - any teammate can review"
     return {"content": f"{head}: <{url}>", "embeds": [embed]}
 
 

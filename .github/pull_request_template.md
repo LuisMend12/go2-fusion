@@ -1,8 +1,8 @@
-<!-- Answer each part in a line or two, then request a teammate as reviewer.
+<!-- Answer each part in a line or two. Any teammate can review; no need to pick one.
      Who, What, Why, Before and After are posted to #feature-revisions on Discord. -->
 
 ## Who
-<!-- Your name, and who you want to review it. -->
+<!-- Your name. -->
 
 ## What
 <!-- What does this change? One sentence. -->

@@ -69,7 +69,7 @@ One block per person: `id` (short, lowercase), `name`, `github` (login), `color`
 
 [discord-ping.yml](../../.github/workflows/discord-ping.yml) runs [discord_ping.py](discord_ping.py) on two kinds of events:
 
-- **Review requests** (a pull request opened ready for review, marked ready for review, or a reviewer requested): posts to #feature-revisions with Who (author, in their team color), What (title), Why, Before and After (read from the [pull request template](../../.github/pull_request_template.md) sections; "not filled in" when empty, with Why falling back to the description's first paragraph), the wiki pages touched and the link, and @mentions the requested reviewers (else the page owners). One post per request: a pull request opened with reviewers posts once, drafts wait until ready.
+- **Review requests** (a pull request opened ready for review, marked ready for review, or a reviewer requested): posts to #feature-revisions with Who (author, in their team color), What (title), Why, Before and After (read from the [pull request template](../../.github/pull_request_template.md) sections; "not filled in" when empty, with Why falling back to the description's first paragraph), the wiki pages touched and the link, headed "Review requested by <author> - any teammate can review". It never singles out one person. One post per request: a pull request opened with reviewers posts once, drafts wait until ready.
 - **Questions** (an issue labelled `question`): posts who asked, which page, the title and link, and mentions the page owners (people with open work on that page, else its last changer).
 
 One-time setup (Max):
