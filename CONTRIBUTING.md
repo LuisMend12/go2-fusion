@@ -76,7 +76,7 @@ If the build ever gets into a strange state, `docker compose down -v` deletes th
    git rebase origin/master
    git push -u origin <your-id>/feat/<short-name>    # add --force-with-lease if you pushed before the rebase
    ```
-4. Open a pull request. Your own branches are personal sandboxes and need no review; only merging into `master` does: one teammate's approval plus green automatic checks. Docs-only pull requests (only wiki pages, guides or code comments) skip the approval; Max merges them once the wiki check passes. Then it's merged and the branch deleted.
+4. Open a pull request. Your own branches are personal sandboxes and need no review; only merging into `master` does: one teammate's approval plus green automatic checks. Only changes to Oak's software (`src/`, `docker/`, `host_tools/`) or its build check need that approval, even when confirmed working on Oak. Wiki pages, guides and team tooling skip it; Max merges them once the checks pass. Then it's merged and the branch deleted.
    - Fill in the template GitHub shows you, a line or two each: **Who** (you, and who should review), **What** it changes, **Why** it's needed, **Before** and **After**, **How to test**, and **Wiki** (the page you updated).
    - Request a teammate as reviewer. The post to the team's Discord channel #feature-revisions (Who, What, Why, Before, After and the link) happens automatically.
 5. Everyone else picks it up with `git fetch && git rebase origin/master` on their own branch.
