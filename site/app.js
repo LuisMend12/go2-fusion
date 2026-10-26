@@ -63,6 +63,7 @@
     const out = {
       repo: d.repo || "maxhawksby/go2-fusion",
       branch: d.branch || "master",
+      base: d.base || "master",
       published: d.published !== false,
       generated_at: d.generated_at || null,
       sample: !!d.sample,
@@ -902,6 +903,9 @@
 
   // ---------- ask box ----------
   function resetAsk() {
+    ask.locked = false;
+    setQuote("");
+    setAskMode(guessMode($("ask-input").value.trim()));
     $("answer").hidden = true;
     $("answer").textContent = "";
     document.querySelectorAll(".ask-quick .chip").forEach((c) => c.setAttribute("aria-pressed", "false"));
@@ -953,12 +957,61 @@
     box.hidden = false;
   }
 
-  function promptFor(q) {
+  // The Ask box is for questions and for edits. Either way it copies a ready
+  // prompt for the reader's own agent (Claude Code, Codex, ...): a question gets
+  // answered, an edit is made on a branch and opened as a pull request.
+  const ask = { mode: "ask", locked: false, quote: "" };
+  const EDIT_WORDS = /^(please\s+)?(change|reword|rewrite|fix|correct|update|add|remove|delete|drop|link|connect|rename|move|replace|shorten|simplify|expand|split|merge|clarify|mention|document|make|write|put|turn)\b/i;
+  const guessMode = (q) => (EDIT_WORDS.test(q) || /\[\[[^\]]+\]\]/.test(q) && !/\?\s*$/.test(q) ? "edit" : "ask");
+  function setAskMode(mode, byHand) {
+    ask.mode = mode;
+    if (byHand) ask.locked = true;
+    document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+    const n = current;
+    $("ask-hint").textContent = mode === "edit"
+      ? "Your agent edits " + (n && n.path ? n.path : "this page") + " on a new branch, runs the wiki check and opens a pull request for you to review."
+      : "Your agent reads this page" + (n && n.code.length ? " and its code" : "") + ", then answers in plain English.";
+  }
+  function setQuote(text) {
+    ask.quote = text;
+    $("ask-quote").hidden = !text;
+    $("ask-quote-text").textContent = text;
+  }
+  // [[Page title]] in the box names a page; the prompt spells out its file
+  const titleIndex = () => D.nodes.slice().sort((a, b) => a.title.localeCompare(b.title));
+  function mentioned(q) {
+    const out = [];
+    q.replace(/\[\[([^\]]+)\]\]/g, (_, t) => {
+      const n = D.nodes.find((x) => x.title.toLowerCase() === t.trim().toLowerCase());
+      if (n && !out.includes(n)) out.push(n);
+    });
+    return out;
+  }
+  const fileOf = (n) => n.path || "README.md";
+
+  function promptFor(q, mode) {
     const n = current;
     const code = n.code.map(codeDir).filter(Boolean);
-    return "In github.com/" + D.repo + " (branch " + D.branch + "), read " + (n.path || "README.md") +
-      (code.length ? " and the code in " + code.join(", ") : "") +
-      ", then answer in plain English: " + (q || "<your question>");
+    const pages = mentioned(q);
+    const plainQ = q.replace(/\[\[([^\]]+)\]\]/g, "$1");
+    const lines = [];
+    const where = "github.com/" + D.repo + " (branch " + D.branch + ")";
+    if (mode === "edit") {
+      lines.push("In " + where + ", edit the wiki page \"" + n.title + "\" (" + fileOf(n) + ").", "", "What I want changed: " + plainQ);
+      if (ask.quote) lines.push("", "The part of the page I mean:", "> " + ask.quote.replace(/\n+/g, " "));
+      if (pages.length) lines.push("", "Pages I mentioned: " + pages.map((p) => p.title + " (" + fileOf(p) + ")").join(", ") +
+        ". To connect pages, add a normal relative link inside a sentence that says how they connect, for example [" + pages[0].title + "](" + fileOf(pages[0]).split("/").pop() + ").");
+      if (code.length) lines.push("", "This page documents " + code.join(", ") + "; check the code before changing any fact.");
+      lines.push("", "Rules: follow AGENTS.md and .claude/skills/wiki-keeper/SKILL.md. Plain English, never invent facts (mark unknowns TODO(owner)). " +
+        "Run python3 scripts/wiki/check_wiki.py until it passes. Work on a new branch from the latest " + D.base + ", commit with a message that starts with the page it touches, " +
+        "open a pull request using .github/pull_request_template.md, and show me the diff.");
+    } else {
+      lines.push("In " + where + ", read " + fileOf(n) + (code.length ? " and the code in " + code.join(", ") : "") +
+        (pages.length ? ", and also " + pages.map(fileOf).join(", ") : "") + ", then answer in plain English:", "", plainQ || "<your question>");
+      if (ask.quote) lines.push("", "About this part of the page:", "> " + ask.quote.replace(/\n+/g, " "));
+      lines.push("", "Link the pages and lines your answer comes from. Don't change any files.");
+    }
+    return lines.join("\n");
   }
 
   function setupAsk() {
@@ -966,30 +1019,119 @@
       document.querySelectorAll(".ask-quick .chip").forEach((x) => x.setAttribute("aria-pressed", String(x === c)));
       answer(c.dataset.q);
     }));
+    const input = $("ask-input");
+    document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { setAskMode(b.dataset.mode, true); input.focus(); }));
+    $("ask-quote-x").addEventListener("click", () => { setQuote(""); input.focus(); });
+
     $("ask-form").addEventListener("submit", (e) => {
       e.preventDefault();
-      const q = $("ask-input").value.trim();
-      if (!q) { toast("Type your question first.", true); $("ask-input").focus(); return; }
+      if (!pages.hidden) return;
+      const q = input.value.trim().replace(/\[\[([^\]]+)\]\]/g, "$1");
+      if (!q) { toast("Type your question first.", true); input.focus(); return; }
       const n = current;
-      const link = D.published && n.path ? blobUrl(n.path) : (n.path || "README.md") + " (branch " + D.branch + ")";
-      const body = "Question about the **" + n.title + "** page.\n\nPage: " + link + "\n\n" + q + "\n\n_Asked from the Oak workspace._";
+      const link = D.published && n.path ? blobUrl(n.path) : fileOf(n) + " (branch " + D.branch + ")";
+      const body = "Question about the **" + n.title + "** page.\n\nPage: " + link + "\n\n" +
+        (ask.quote ? "> " + ask.quote.replace(/\n+/g, " ") + "\n\n" : "") + q + "\n\n_Asked from the Oak workspace._";
       const url = GH() + "/issues/new?title=" + encodeURIComponent(q) + "&labels=" + encodeURIComponent("question,wiki:" + n.id) + "&body=" + encodeURIComponent(body);
       window.open(url, "_blank", "noopener");
       toast("Opened GitHub in a new tab. Press Submit there to save your question.");
     });
+
     $("ask-agent").addEventListener("click", () => {
-      const text = promptFor($("ask-input").value.trim());
+      const q = input.value.trim();
+      if (!q && ask.mode === "edit") { toast("Say what you want changed first.", true); input.focus(); return; }
+      const text = promptFor(q, ask.mode);
+      const done = ask.mode === "edit"
+        ? "Copied. Paste it into Claude Code, Codex or your own agent: it will make the edit and open a pull request."
+        : "Copied. Paste it into Claude Code, Codex or your own agent.";
       const fallback = () => {
         $("copy-fallback").hidden = false;
         const ta = $("copy-text"); ta.value = text; ta.focus(); ta.select();
         toast("Your browser blocked copying. Select the text below and copy it.", true);
       };
       if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(text).then(() => {
-          $("copy-fallback").hidden = true;
-          toast("Prompt copied. Paste it into Claude Code, Codex, or your own agent.");
-        }, fallback);
+        navigator.clipboard.writeText(text).then(() => { $("copy-fallback").hidden = true; toast(done); }, fallback);
       } else fallback();
+    });
+
+    // guess question vs edit from the words, until the reader picks one
+    input.addEventListener("input", () => { if (!ask.locked) setAskMode(guessMode(input.value.trim())); suggest(); });
+
+    // [[ suggests pages; Enter or Tab inserts [[Title]]
+    const pages = $("ask-pages");
+    let opts = [], sel = 0;
+    function partial() {
+      const before = input.value.slice(0, input.selectionStart);
+      const m = /\[\[([^\[\]]*)$/.exec(before);
+      return m ? { start: before.length - m[0].length, text: m[1].toLowerCase() } : null;
+    }
+    function suggest() {
+      const p = partial();
+      pages.textContent = "";
+      if (!p) { closePages(); return; }
+      opts = titleIndex().filter((n) => n.title.toLowerCase().includes(p.text))
+        .sort((a, b) => a.title.toLowerCase().indexOf(p.text) - b.title.toLowerCase().indexOf(p.text)).slice(0, 7);
+      if (!opts.length) { closePages(); return; }
+      sel = 0;
+      opts.forEach((n, i) => {
+        const li = h("li", { role: "option", id: "ap-" + i, "aria-selected": String(i === 0) }, n.title,
+          n.parent && byId[n.parent] ? h("span", { class: "r-kind" }, byId[n.parent].title) : null);
+        li.addEventListener("mousedown", (e) => { e.preventDefault(); insert(i); });
+        pages.append(li);
+      });
+      pages.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+      input.setAttribute("aria-activedescendant", "ap-0");
+    }
+    function closePages() { pages.hidden = true; input.setAttribute("aria-expanded", "false"); input.removeAttribute("aria-activedescendant"); }
+    function insert(i) {
+      const p = partial(), n = opts[i];
+      if (!p || !n) return;
+      const after = input.value.slice(input.selectionStart).replace(/^[^\]\s]*\]\]/, "");
+      const head = input.value.slice(0, p.start) + "[[" + n.title + "]] ";
+      input.value = head + after;
+      input.setSelectionRange(head.length, head.length);
+      closePages();
+      if (!ask.locked) setAskMode(guessMode(input.value.trim()));
+    }
+    input.addEventListener("keydown", (e) => {
+      if (pages.hidden) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + opts.length) % opts.length;
+        pages.querySelectorAll("li").forEach((li, i) => li.setAttribute("aria-selected", String(i === sel)));
+        input.setAttribute("aria-activedescendant", "ap-" + sel);
+      } else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insert(sel); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closePages(); }
+    });
+    input.addEventListener("blur", () => setTimeout(closePages, 100));
+
+    // select text on the page: a small button quotes it into the Ask box
+    const selBtn = $("sel-ask");
+    const content = $("content");
+    function placeSel() {
+      const s = window.getSelection();
+      const text = s && !s.isCollapsed ? s.toString().replace(/\s+/g, " ").trim() : "";
+      if (text.length < 3 || !content.contains(s.anchorNode) || !content.contains(s.focusNode)) { selBtn.hidden = true; return; }
+      const r = s.getRangeAt(0).getBoundingClientRect();
+      selBtn.hidden = false;
+      const w = selBtn.offsetWidth;
+      selBtn.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px";
+      selBtn.style.top = (r.top > 48 ? r.top - selBtn.offsetHeight - 8 : r.bottom + 8) + "px";
+    }
+    content.addEventListener("mouseup", () => setTimeout(placeSel, 0));
+    content.addEventListener("keyup", (e) => { if (e.shiftKey) placeSel(); });
+    document.addEventListener("selectionchange", () => { const s = window.getSelection(); if (!s || s.isCollapsed) selBtn.hidden = true; });
+    $("reader-scroll").addEventListener("scroll", () => { selBtn.hidden = true; }, { passive: true });
+    selBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    selBtn.addEventListener("click", () => {
+      let text = window.getSelection().toString().replace(/\s+/g, " ").trim();
+      if (text.length > 600) text = text.slice(0, 597) + "...";
+      selBtn.hidden = true;
+      window.getSelection().removeAllRanges();
+      setQuote(text);
+      $("ask-form").scrollIntoView({ behavior: reduceMotion.matches ? "auto" : "smooth", block: "center" });
+      input.focus({ preventScroll: true });
     });
   }
 
