@@ -34,6 +34,7 @@ More detail on each person, and how to reach them, is on [People](people.md).
 
 - **Branches are your sandbox.** Push whatever you like to your own branch; no review needed.
 - **Merging into `master`** needs a GitHub pull request with one teammate's approval and green automatic checks. Nobody pushes to `master` directly.
+- **Docs-only pull requests** (only wiki pages, guides or code comments) skip the teammate approval: once the wiki check passes, Max merges them. Anything that changes how code runs still needs a teammate.
 - **Tasks live as GitHub issues**, labelled `wiki:<page>` (for example `wiki:maps-nav`). Take one by assigning it to yourself.
 - **Keep the wiki true.** If you change a program's code, update its wiki page in the same pull request. A check fails otherwise.
 - **Test without the robot first.** There is one Oak, and it accepts one connection at a time.
