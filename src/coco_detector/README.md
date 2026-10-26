@@ -132,3 +132,5 @@ The ROS2 documentation suggests that the ObjectHypotheses.class_id should be an 
 [MobileNets: Efficient Convolutional Neural Networks for Mobile Vision Applications](https://arxiv.org/abs/1704.04861)
 
 [ROS2 Vision Msgs Github repo](https://github.com/ros-perception/vision_msgs)
+
+Full explanation: [Object detection wiki page](../../docs/wiki/object-detection.md)

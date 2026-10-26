@@ -1,8 +1,22 @@
-# Robot test log
+---
+title: Test log
+parent: lab-setup
+---
 
-One section per lab session, newest first. Each test gets a result (pass, fail, partial, not run) and what we saw.
-Open issues at the bottom carry over between sessions until they're fixed and retested.
-Claude updates this during a session from Max's feedback and what it measures, and commits it at the end.
+# Test log
+
+The test log is Oak's lab notebook: one section per session with the real robot, recording what we tested, whether it passed, and what is still broken.
+
+Part of: [Lab setup](lab-setup.md)
+
+## How it works
+
+This page is the log itself. Newest session first.
+Each test gets one of these results: **pass**, **fail**, **partial**, or **not run**, plus a short note on what we saw.
+An **Open issues** list carries over between sessions until each issue is fixed and retested on Oak.
+During a session, the note-taker (often Claude, from Max's feedback and its own measurements) updates this page and commits it at the end.
+
+It matters because robot time is scarce: one dog, one connection at a time. The log tells you what is already known, so you test what is new.
 
 ## 2026-10-11 - ISL lab, Oak, Wi-Fi (WebRTC)
 
@@ -31,5 +45,28 @@ Earlier tests ran on `f85e703` (fusion before Luis's update); marked "old code" 
 1. Retest Nav2 goals and MapViewer click-to-walk on new code.
 2. Retest keyboard driving feel with both teleop fixes.
 3. Find out what starts `lidar_to_pointcloud` and whether its input topic is right.
-4. Confirm by eye that the dog stops cleanly when a drive source goes quiet.
+4. Confirm by eye that Oak stops cleanly when a drive source goes quiet.
 5. WSL has 7.4 GB RAM: keep builds at `-j4` / 2 workers, or raise `memory=` in `.wslconfig`.
+6. Gamepad LB deadman: no longer required. The team no longer uses an Xbox gamepad; it drives with the Oak ROS2 pad, which sends signals differently. The pad talks straight to Oak and skips ROS (Max, 2026-10-22).
+
+Still to check from the fusion follow-ups (see [Decisions](decisions.md)): the driver reconnects after a Wi-Fi drop, TTS with the new 4 KB chunks, each twist_mux input actually reaching the driver, the sit message, the RViz panels, and `CONN_TYPE=webrtc` as the compose default.
+
+## Connects to
+
+- [Lab checklist](lab-checklist.md): how to get connected for a session.
+- [Roadmap](roadmap.md) and the [Oak](../../README.md) front page: open issues show up there.
+- Program pages such as [Keyboard teleop](keyboard-teleop.md), [Nav2](nav2.md) and [Go2 driver](go2-driver.md) quote these results in their "How it breaks" sections.
+
+## How it breaks
+
+- **It goes stale.** The last recorded session is 2026-10-11. Luis's auto mapper work and later fixes have no logged robot session yet. TODO(owner): add sessions since then.
+
+## How to add a session
+
+Add a new `## <date> - <place>, Oak, <Wi-Fi or Ethernet>` section above the newest session, name the code you ran (branch and commit), then one table row per test. Never write network names, addresses or keys in it. Move fixed items out of Open issues only after a retest on Oak.
+
+## Who's on it and what's next
+
+Max keeps the log. Next: the retests above, and Luis's full exploration tests with the auto mapper.
+
+<!-- sources: docs/TEST_LOG.md (whole file, folded in here and deleted 2026-10-22); docs/FUSION.md "Follow-ups for the team" 4; README.md open issues; team update 2026-10-18 (Luis next: full exploration tests); git log c18ca87 -->

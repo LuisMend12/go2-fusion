@@ -98,3 +98,5 @@ there's no watchdog timer needed. Losing focus (clicking elsewhere) clears
 every held key and publishes an immediate stop — if you're mid-drive and
 click into another panel, it won't keep driving with no way to let go of
 the key from here anymore.
+
+Full explanation: [RViz panels wiki page](../../docs/wiki/rviz-panels.md)

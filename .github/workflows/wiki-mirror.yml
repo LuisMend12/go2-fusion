@@ -1,0 +1,53 @@
+# Copies the wiki from the repo into the GitHub Wiki tab after every merge.
+# The repo is the source of truth; the Wiki tab is a read-only mirror, and each
+# mirrored page ends with "Edit this page in the repo: <link>".
+#
+# ONE-TIME SETUP (by a repo admin, before this can work):
+#   1. Settings > General > Features: tick "Wikis".
+#   2. Open the Wiki tab and create any first page by hand (GitHub only
+#      creates the <repo>.wiki.git repository once a page exists).
+# After that this job overwrites every page on each run.
+name: Wiki mirror
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - README.md
+      - docs/wiki/**
+      - scripts/wiki/mirror_to_wiki.py
+  workflow_dispatch:
+
+permissions:
+  contents: write  # lets the built-in GITHUB_TOKEN push to <repo>.wiki.git
+
+concurrency:
+  group: wiki-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone the wiki
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: git clone "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.wiki.git" wiki-out
+
+      - name: Build the wiki pages
+        run: python3 scripts/wiki/mirror_to_wiki.py --out wiki-out --repo "${{ github.repository }}" --branch "${{ github.ref_name }}"
+
+      - name: Push to the wiki
+        working-directory: wiki-out
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already up to date."
+            exit 0
+          fi
+          git commit -m "Mirror wiki from ${{ github.repository }}@${GITHUB_SHA::7}"
+          git push

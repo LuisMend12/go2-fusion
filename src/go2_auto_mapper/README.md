@@ -197,3 +197,5 @@ Validate without a robot from `docker/` on Windows:
 ```powershell
 docker compose -f docker-compose.windows.yml run --rm unitree_ros bash -c 'python3 -m pytest /ros2_ws/src/go2_auto_mapper/test'
 ```
+
+Full explanation, including every parameter: [Auto mapper wiki page](../../docs/wiki/auto-mapper.md)

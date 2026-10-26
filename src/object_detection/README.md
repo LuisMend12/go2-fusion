@@ -62,3 +62,5 @@ update the default in `detector_node.py`.
   needs internet on first run.
 - Needs `ultralytics` from pip; it is in the repo's `requirements.txt`, so the Docker image
   has it.
+
+Full explanation: [Object detection wiki page](../../docs/wiki/object-detection.md)
