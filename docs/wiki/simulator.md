@@ -91,13 +91,19 @@ In `sim.yaml` only: `odom_scale_xy` and `odom_scale_yaw` (Oak says it went or tu
 
 Put the `.sdf` file anywhere and pass `world:=/ros2_ws/src/<path>.sdf`. Two rules: build it for Gazebo Fortress, and make walls and furniture boxes or cylinders, because the true map for scoring is built from those. A world made of meshes (for example a 3D scan) needs a true map shipped next to it as `<world>.gt.yaml` plus `.pgm`, in the same format the map saver writes. `ros2 run go2_sim ground_truth <world>` writes the true map, so you can open the picture and check it.
 
+## First trial batch (2026-10-28)
+
+The first 10-run batch in the placeholder world, default dials, real-time factor 1.0: **1 of 10 finished, mean map completeness 78.3 % (47.7 to 99.5 %), 0 collisions, 135 m walked**, about 4.5 minutes per run. Eight of the nine unfinished runs ended stuck at or beside a 1.2 m doorway (real doors are narrower).
+
+Getting there, the simulator caught bugs in [Nav2](nav2.md) (the costmap stall below) and in the [Auto mapper](auto-mapper.md)'s unstuck move (three ways it refused every escape). That batch ran with their fixes applied; the fixes are a separate change request for Luis to review, on branch `max/fix/explorer-recovery`. TODO(Max): add its pull request number.
+
 ## What it found so far
 
-First 10-run batch (2026-10-28, placeholder world, default dials, real-time factor 1.0): mean map completeness 78 % (48 to 99.5 %), 1 of 10 finished, 0 collisions, about 4.5 minutes per run. Eight of the nine unfinished runs ended stuck in or beside a 1.2 m doorway; real doors are narrower.
+With this branch alone (master's Nav2 settings and auto mapper), a 2-run check maps 5.1 % and 5.8 % and never moves: the auto mapper logs "timed out waiting for fresh costmap" after its first scan (first item below).
 
-- **Nav2 never re-sent the full local costmap while Oak stood still**, so the auto mapper stalled after its first scan ("timed out waiting for fresh costmap"). Fixed in `nav2_params.yaml` (see [Nav2](nav2.md)); still to confirm on Oak.
-- **Oak latched stopped next to the first close obstacle.** The auto mapper's unstuck move said "no safe direction" and waited forever, even with open floor behind. The lidar there reads true distances (checked beam by beam against the true map). Three bugs in the auto mapper's check caused it, all fixed (see [Auto mapper](auto-mapper.md)), still to confirm on Oak.
-- **Nav2 drives Oak to within 0.05-0.25 m of door jambs, the pillar and furniture**, then reports "No valid trajectories" or "Failed to make progress". With the recovery fixes Oak can back off more often, but some runs still end stuck in a doorway or corner. TODO(Luis): does Oak get that close on the real floor? If so, Nav2's obstacle weighting (DWB `ObstacleFootprint.scale` 0.02) is the place to look.
+- **The auto mapper stalls waiting for a costmap.** After Oak stops or spins in place, it waits for a fresh `/local_costmap/costmap`, but Nav2 only re-sends the full grid when its rolling window moves, so it can wait forever ("timed out waiting for fresh costmap").
+- **The auto mapper latches stopped next to close obstacles.** Its unstuck move says "no safe direction: rear and both sides lack clearance" and waits, even with open floor behind. The lidar there reads true distances (checked beam by beam against the true map), so this is the auto mapper's own check, not the simulator. TODO(Luis): check on Oak.
+- **Nav2 drives Oak to within 0.05-0.25 m of door jambs, the pillar and furniture**, then reports "No valid trajectories" or "Failed to make progress". TODO(Luis): does Oak get that close on the real floor?
 - **`go2.urdf`'s fixed `odom` -> `base_link` joint** puts `base_link` on the floor until odometry starts; a lidar cloud sent before then shows the floor as walls. The stand-in driver now waits for odometry first. The real driver might hit the same thing at startup (see [TF and robot model](tf.md)).
 
 ## How it breaks
@@ -111,7 +117,7 @@ First 10-run batch (2026-10-28, placeholder world, default dials, real-time fact
 
 ## Who's on it and what's next
 
-Max added the simulator (branch `feat/go2-sim`). Next: Jeth's lab world (issue #28) in place of the placeholder, and real odometry and lidar numbers from Oak for the dials. TODO(owner): an owner for the simulator.
+Max added the simulator (branch `max/feat/go2-sim`). Next: Jeth's lab world (issue #28) in place of the placeholder, and real odometry and lidar numbers from Oak for the dials. TODO(owner): an owner for the simulator.
 
 ## The code
 
