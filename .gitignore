@@ -24,3 +24,6 @@ site/graph.js
 
 # Local wiki app (npm run wiki)
 node_modules/
+
+# Agent worktrees
+.worktrees/
