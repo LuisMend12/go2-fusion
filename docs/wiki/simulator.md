@@ -12,7 +12,7 @@ Part of: [Lab setup](lab-setup.md)
 
 > **Get it running.** Run every line from a fresh terminal at the repo root. Until this is merged, first `git fetch && git switch max/feat/go2-sim`.
 >
-> **On this branch alone the auto mapper stalls at about 5% of the map**, because of recovery bugs. The fixes are in branch `max/fix/explorer-recovery` (pending review). Driving by hand and the other tests work now.
+> This branch, `max/fix/explorer-recovery`, adds the auto mapper fixes on top of the simulator, so the auto mapper explores instead of stalling at about 5 % (pending review).
 >
 > 0. **Stop the robot stack first** (WSL: `cd docker && docker compose down`; PowerShell: `cd docker; docker compose -f docker-compose.windows.yml down`; Mac: Ctrl-C any running `robot.launch.py`). The sim and the robot stack share build folders.
 > 1. **Rebuild the image once:** it adds Gazebo, about 1 GB to download. On a 16-core desktop the rebuild took about 11 minutes; a laptop is slower. The image ends up around 14 GB.
