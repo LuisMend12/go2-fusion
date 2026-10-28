@@ -158,6 +158,9 @@ whatever Nav2 was commanding.
 | `scan_after_goal` | `true` | Turn a full circle after each goal it reaches |
 | `scan_yaw` | `6.283` (2π) | How far to turn per scan, in radians |
 | `scan_time_allowance` | `30.0` | Seconds Nav2 has to finish the turn before giving up |
+| `avoid_people` | `true` | Skip goals in a person's space, across where they are about to walk, or inside a group (needs `/people`) |
+| `yield_to_people` | `true` | While driving, stop up to 6 s for a person just ahead (1.5 m) to pass |
+| `personal_space` | `1.0` | Meters around each person kept free of goals |
 
 Override at launch, e.g.:
 ```shell
