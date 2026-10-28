@@ -69,6 +69,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-rosbridge-server && \
     rm -rf /var/lib/apt/lists/*
 
+# Gazebo Fortress and its ROS bridge, for the go2_sim simulator. go2_sim's
+# package.xml also lists the ros_gz_* keys (rosdep installs those); this pulls in
+# the whole ros-humble-ros-gz set, including the `ign gazebo` command line tool.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-ros-gz && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN curl -fsSL https://install.julialang.org | sh -s -- --yes
 ENV PATH="/root/.juliaup/bin:${PATH}"
 # Pinned to match go2_map_viewer_julia/Manifest.toml's julia_version - an

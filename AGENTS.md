@@ -23,6 +23,7 @@ All ROS packages live under `src/`.
 | `go2_llm_agent` | Plain-English commands to robot actions via an LLM. The team is moving it to a local Ollama model (Qwen) on `adib/feat/llm-agent`; on master its pip deps are not in the image, so it builds but does not run |
 | `speech_processor` | Text to speech through the robot's speaker |
 | `front_leg_controller` | Leg/posture commands |
+| `go2_sim` | Gazebo Fortress simulator: a velocity-driven Oak running the real stack, and an auto mapper trial runner |
 
 `host_tools/` holds tools that run on the host, outside Docker (not ROS packages): `speech_to_text/vad_listen.py` sends microphone transcripts to `go2_llm_agent`. [Decisions](docs/wiki/decisions.md) records what came from Riley Francis's ROS2-LLM-Nav and why.
 

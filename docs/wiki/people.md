@@ -51,7 +51,7 @@ Part of: [Team](team.md)
 - **GitHub:** [maxhawksby](https://github.com/maxhawksby). Max Hawksby.
 - **Focus:** computer vision, and the wiki.
 - **Pages to ask about:** [Object detection](object-detection.md), [Team](team.md), and the wiki itself.
-- **Current work:** YOLO object detection that remembers objects on the map, to make mapping rooms easier (pull request #21). Also open: a navigation safety fix that stops on stale sensors (pull request #20).
+- **Current work:** YOLO object detection that remembers objects on the map, to make mapping rooms easier (pull request #21). Also open: a navigation safety fix that stops on stale sensors (pull request #20), and the [Simulator](simulator.md) (branch `feat/go2-sim`).
 - **Next:** TODO(Max).
 
 ## How we work together

@@ -63,6 +63,7 @@ You are set up. From here, the [Docker](docker.md) page explains the daily edit 
 4. [Command cheat sheet](commands.md) - copy-paste commands for RViz, the map viewers, keyboard driving, auto mapping and rebuilds.
 5. [Lab checklist](lab-checklist.md) - what to do before and at the lab to connect to the real Oak.
 6. [Test log](test-log.md) - what we tested on Oak, what passed, and what is still open.
+7. [Simulator](simulator.md) - a pretend Oak in Gazebo: watch the auto mapper with no robot, or run it 10 times and get a score table.
 
 ## Going to the lab
 

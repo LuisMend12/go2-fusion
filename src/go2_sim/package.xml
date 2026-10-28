@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>go2_sim</name>
+  <version>0.0.1</version>
+  <description>Gazebo Fortress simulator for Oak (Unitree Go2): velocity-driven body, lidar,
+    noisy odometry, placeholder rooms world, and an auto mapper trial runner.</description>
+  <maintainer email="maxwellhawksby@gmail.com">Max Hawksby</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <!-- Gazebo Fortress and its ROS bridge (ros-humble-ros-gz) -->
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>ros_gz_interfaces</exec_depend>
+  <!-- The stack it runs -->
+  <exec_depend>go2_robot_sdk</exec_depend>
+  <exec_depend>go2_auto_mapper</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
