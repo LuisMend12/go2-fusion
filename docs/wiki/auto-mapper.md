@@ -84,7 +84,7 @@ From the package README and Luis's commits (Oct 14-19):
 - **Nibbling the nearest edge.** Ranking goals by distance made it creep along the closest frontier; replaced by "most revealed per meter" on 2026-10-16.
 - **Two motions at once.** Codex reviews on 2026-10-17 found cases where a late Nav2 reply or a recovery move could override a stop; each maneuver is now tracked until Nav2 confirms it ended, and a latched stop always wins.
 - **Waits for fresh data.** After every scan or move it waits up to 20 s for newer `/scan`, `/point_cloud2`, `/map`, costmap and TF. If they don't come, exploration stays stopped until Scan is pressed.
-- **The 3D cloud never forgets** moved objects; neither SLAM nor the 3D map is cleared during recovery.
+- **The 3D cloud forgets moved objects only where Oak looks** (see [Lidar](lidar.md)); neither SLAM nor the 3D map is cleared during recovery.
 - **People positions are rough.** They come from the camera's box-height guess, and on master left and right are flipped (see [Object detection](object-detection.md)), so Oak can wait for, or steer around, a person on the wrong side. The camera only looks forward, so people behind or beside Oak are not seen. TODO(Luis): test with people in the lab.
 - **Waiting too long gets the goal dropped.** Nav2 gives up a goal after 10 s without movement (`movement_time_allowance`); the 6 s wait stays under that, so don't raise one without the other.
 - **Big maps** make each step slower, because the whole map is rescanned every cycle.
