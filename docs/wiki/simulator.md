@@ -10,6 +10,21 @@ The simulator is a pretend Oak in a pretend flat, inside Gazebo (a robot simulat
 
 Part of: [Lab setup](lab-setup.md)
 
+> **Get it running** (from the repo root; until this is merged, first `git fetch && git switch max/feat/go2-sim`)
+>
+> 1. **Rebuild the image once:** it adds Gazebo, about 1 GB to download. On a 16-core desktop the rebuild took about 11 minutes; a laptop is slower. The image ends up around 14 GB.
+>    - Windows/WSL: `cd docker && docker compose build && docker compose run --rm unitree_ros true`
+>    - Mac: `bash docker/mac/go2.sh build && bash docker/mac/go2.sh up`
+> 2. **Watch one run** (needs RViz windows working: [WSL and Windows](wsl.md), [Mac setup](mac-setup.md)):
+>    - Windows/WSL: `docker compose run --rm unitree_ros ros2 launch go2_sim sim.launch.py rviz:=true explore:=true`
+>    - Mac: `docker compose -f docker/mac/compose.yaml exec unitree_ros bash -ic 'ros2 launch go2_sim sim.launch.py rviz:=true explore:=true'`
+>    - Add `gui:=true` for the Gazebo window too. Without an NVIDIA card it halves the simulator's speed (below).
+> 3. **Run the 10 trials** (no windows; about 45-60 minutes):
+>    - Windows/WSL: `docker compose run --rm unitree_ros ros2 run go2_sim trials`
+>    - Mac: `docker compose -f docker/mac/compose.yaml exec unitree_ros bash -ic 'ros2 run go2_sim trials'`
+>
+> No NVIDIA card is needed. Tested on 2026-10-28 with no GPU at all, software rendering, 4 CPUs and 6 GB: headless runs kept real-time speed (factor 1.0, about 2 CPUs, at most 1.8 GB). RViz-only watching ran at 0.9. The Gazebo window plus RViz ran at 0.55 and used up to 2.5 GB. The Mac lines are untested: TODO(Adib): try them on a Mac.
+
 ## How it works
 
 **No legs, on purpose.** Oak's own computer does the walking; our code only ever tells it "go this fast forward, sideways and turning". So the simulated Oak is one Go2-sized box (0.70 x 0.31 m) that Gazebo slides around at the commanded speed, sideways included. That is what our stack can tell apart, and it is much faster and steadier than simulating legs.
@@ -33,16 +48,16 @@ You need RViz windows working first ([WSL and Windows](wsl.md) or [Mac setup](ma
 
 ```shell
 cd docker
-docker compose -p go2fusion run --rm unitree_ros ros2 launch go2_sim sim.launch.py gui:=true explore:=true
+docker compose run --rm unitree_ros ros2 launch go2_sim sim.launch.py rviz:=true explore:=true
 ```
 
-The Gazebo window shows Oak in the flat; RViz shows the map growing. `explore:=true` starts the auto mapper right away. Leave it out to drive yourself (keyboard teleop in a second terminal, with the domain set as above). Start somewhere else with `x:=7.5 y:=7.0 yaw:=1.57`. Closing Gazebo stops everything.
+RViz shows Oak and the map growing. `explore:=true` starts the auto mapper right away. Leave it out to drive yourself (keyboard teleop in a second terminal, with the domain set as above). Start somewhere else with `x:=7.5 y:=7.0 yaw:=1.57`. Add `gui:=true` to also open the Gazebo window, which shows the flat itself; closing it stops everything. Without a GPU the Gazebo window is expensive (see the box above), so RViz alone is the better choice on most laptops.
 
 ## Run many trials (headless)
 
 ```shell
 cd docker
-docker compose -p go2fusion run --rm unitree_ros ros2 run go2_sim trials
+docker compose run --rm unitree_ros ros2 run go2_sim trials
 ```
 
 This runs the auto mapper 10 times with no windows. Each run starts a fresh simulator at a random start spot (the same spots every time for the same `--seed`), waits for Nav2, starts the auto mapper, and stops at "Exploration complete", after 15 minutes, or when Oak is stuck (moved less than 0.25 m in 3 minutes). It then prints one row per run plus totals:
@@ -61,11 +76,11 @@ The trials run headless, but you can look in on them. Start the trials in a name
 
 ```shell
 cd docker
-docker compose -p go2fusion run --rm --name oak-trials unitree_ros ros2 run go2_sim trials
+docker compose run --rm --name oak-trials unitree_ros ros2 run go2_sim trials
 docker exec -it oak-trials bash -ic 'ros2 run go2_sim watch'     # second terminal
 ```
 
-`watch` opens a Gazebo window and RViz on whichever run is going, and moves to the next run when one ends (`--no-rviz` for Gazebo only). It only looks: closing it, or never opening it, does not change the runs. It needs RViz windows working ([WSL and Windows](wsl.md)).
+`watch` opens a Gazebo window and RViz on whichever run is going, and moves to the next run when one ends. Without a GPU use `--no-gazebo` (RViz only): the Gazebo window would slow the run it watches. `--no-rviz` opens Gazebo only. It only looks: closing it, or never opening it, does not change the runs. It needs RViz windows working ([WSL and Windows](wsl.md)).
 
 ## The dials
 
@@ -109,8 +124,8 @@ With this branch alone (master's Nav2 settings and auto mapper), a 2-run check m
 ## How it breaks
 
 - **"Gazebo's `ign` command is missing".** The image is older than the simulator: run `docker compose build`.
-- **No lidar, startup timeout.** The headless lidar needs a working graphics library inside the container. The trial log says `startup timeout: no lidar on /point_cloud2`; look at `logs/run_01_launch.log`. TODO(owner): confirm on a machine without an NVIDIA card.
-- **Runs slower than real time.** The auto mapper's waits are in wall-clock seconds, so a slow simulator makes it give up early. The trial runner prints a real-time factor per run; below about 0.9, close other programs or run fewer things at once.
+- **No lidar, startup timeout.** The headless lidar is drawn with OpenGL; without a GPU, Mesa's software renderer (llvmpipe) does it, which works (tested, see the box at the top). If the trial log says `startup timeout: no lidar on /point_cloud2`, look at `logs/run_01_launch.log` for OpenGL errors.
+- **Runs slower than real time.** The auto mapper's waits are in wall-clock seconds, so a slow simulator makes it give up early and scores look worse than they are. The trial runner prints a real-time factor per run. Below about 0.9, close the Gazebo window (on a laptop without a GPU it alone halves the speed) or close other programs. Fewer lidar points is not a fix: below 720 per ring, `/scan` gets holes the auto mapper treats as unsafe.
 - **It is kinder than the real Oak.** Perfectly flat floor, no people, no glass or mirrors, a cleaner lidar, and a body that slides instead of stepping. A good trial score is a first check, not proof; confirm on Oak and log it in the [Test log](test-log.md).
 - **Collisions push, not stop.** Gazebo keeps pushing Oak at the commanded speed while it touches a wall, so one long scrape counts as one bump.
 - **The RViz AutoMapper panel works** (it starts the auto mapper in the simulator's domain), but its Reset maps button restarts SLAM, which makes that run's score meaningless.
@@ -126,7 +141,7 @@ https://github.com/maxhawksby/go2-fusion/tree/master/src/go2_sim (`launch/sim.la
 Unit tests (no Gazebo needed):
 
 ```shell
-docker compose -p go2fusion run --rm unitree_ros bash -c 'python3 -m pytest /ros2_ws/src/go2_sim/test'
+docker compose run --rm unitree_ros bash -c 'python3 -m pytest /ros2_ws/src/go2_sim/test'
 ```
 
 <!-- sources: src/go2_sim/** (this branch), src/go2_robot_sdk/launch/robot.launch.py (driver arg), go2_driver_node.py and ros2_publisher.py (topics, odom frame), urdf/go2.urdf (radar_joint), config/nav2_params.yaml (footprint), config/twist_mux.yaml, docs/wiki/driver.md and test-log.md (lidar rates), docs/wiki/auto-mapper.md ("Exploration complete") -->
