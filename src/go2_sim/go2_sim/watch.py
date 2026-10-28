@@ -1,7 +1,8 @@
 """Watch headless trials live: a Gazebo window and RViz on the running trial.
 
-    ros2 run go2_sim watch            # Gazebo + RViz
-    ros2 run go2_sim watch --no-rviz  # Gazebo only
+    ros2 run go2_sim watch               # Gazebo + RViz
+    ros2 run go2_sim watch --no-gazebo   # RViz only: the light choice without a GPU
+    ros2 run go2_sim watch --no-rviz     # Gazebo only
 
 Run it in the same container as `ros2 run go2_sim trials`. It reads which ROS
 domain and Gazebo partition the current run uses (the trial runner writes them
@@ -13,6 +14,7 @@ going, since the windows only look and never send anything.
 import argparse
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -43,7 +45,7 @@ def stop(procs):
             os.killpg(p.pid, signal.SIGKILL)
 
 
-def open_windows(info, rviz):
+def open_windows(info, rviz, gazebo):
     from ament_index_python.packages import get_package_share_directory
     env = os.environ.copy()
     env.update(ROS_DOMAIN_ID=str(info['ROS_DOMAIN_ID']), ROS_LOCALHOST_ONLY='1',
@@ -54,11 +56,15 @@ def open_windows(info, rviz):
                     env.get('IGN_GAZEBO_RESOURCE_PATH', '')) if p)
     quiet = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                  env=env, start_new_session=True)
-    procs = [subprocess.Popen(['ign', 'gazebo', '-g'], **quiet)]
+    # On a Mac, windows go through docker/mac's mac-gui (VirtualGL to XQuartz).
+    window = ['mac-gui'] if shutil.which('mac-gui') else []
+    procs = []
+    if gazebo:
+        procs.append(subprocess.Popen(window + ['ign', 'gazebo', '-g'], **quiet))
     if rviz:
         config = os.path.join(get_package_share_directory('go2_robot_sdk'),
                               'config', 'single_robot_conf.rviz')
-        procs.append(subprocess.Popen(['rviz2', '-d', config], **quiet))
+        procs.append(subprocess.Popen(window + ['rviz2', '-d', config], **quiet))
     return procs
 
 
@@ -69,6 +75,8 @@ def _interrupt(_signum, _frame):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--no-rviz', action='store_true', help='Gazebo window only')
+    parser.add_argument('--no-gazebo', action='store_true',
+                        help='RViz only: without a GPU the Gazebo window halves the speed')
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     if not os.environ.get('DISPLAY') and not os.environ.get('WAYLAND_DISPLAY'):
         sys.exit('No display: windows need DISPLAY (see docs/wiki/wsl.md).')
@@ -91,7 +99,8 @@ def main(argv=None):
                           flush=True)
                     # Give the run's Gazebo server a moment to start.
                     time.sleep(3)
-                    procs = open_windows(info, rviz=not args.no_rviz)
+                    procs = open_windows(info, rviz=not args.no_rviz,
+                                         gazebo=not args.no_gazebo)
                 else:
                     print('[watch] run ended; waiting for the next one...', flush=True)
             time.sleep(1)

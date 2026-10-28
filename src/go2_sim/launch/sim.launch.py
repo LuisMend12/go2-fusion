@@ -106,10 +106,13 @@ def _setup(context):
     with open(composed_path, 'w') as f:
         f.write(composed)
 
-    gz_cmd = ['ign', 'gazebo', '-r', '-v', '2']
-    if not gui:
-        gz_cmd += ['-s', '--headless-rendering']
-    gazebo = ExecuteProcess(cmd=gz_cmd + [composed_path], output='screen')
+    # The server always runs headless, exactly as in the trials; the window
+    # (gui:=true) is a separate viewer on top. On a Mac, windows go through
+    # docker/mac's mac-gui wrapper (VirtualGL to XQuartz).
+    gazebo = ExecuteProcess(
+        cmd=['ign', 'gazebo', '-s', '-r', '-v', '2', '--headless-rendering', composed_path],
+        output='screen')
+    window = ['mac-gui'] if shutil.which('mac-gui') else []
 
     overrides = {'lidar_range': float(_arg(context, 'lidar_range')),
                  'base_height': base_height,
@@ -143,11 +146,17 @@ def _setup(context):
                               'joystick': 'false', 'teleop': 'true',
                               'slam': 'true', 'nav2': 'true'}.items()),
     ]
+    if gui:
+        viewer = ExecuteProcess(cmd=window + ['ign', 'gazebo', '-g', '-v', '1'], output='screen')
+        actions += [viewer, RegisterEventHandler(OnProcessExit(
+            target_action=viewer,
+            on_exit=[EmitEvent(event=Shutdown(reason='Gazebo window closed'))]))]
     if rviz:
-        actions.append(Node(
-            package='rviz2', executable='rviz2', name='go2_rviz2', output='screen',
-            arguments=['-d', os.path.join(get_package_share_directory('go2_robot_sdk'),
-                                          'config', 'single_robot_conf.rviz')]))
+        actions.append(ExecuteProcess(
+            cmd=window + ['rviz2', '-d', os.path.join(
+                get_package_share_directory('go2_robot_sdk'), 'config',
+                'single_robot_conf.rviz')],
+            output='screen'))
     if _arg(context, 'explore').lower() == 'true':
         actions.append(Node(package='go2_auto_mapper', executable='explorer',
                             name='frontier_explorer', output='screen'))

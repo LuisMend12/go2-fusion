@@ -69,6 +69,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-rosbridge-server && \
     rm -rf /var/lib/apt/lists/*
 
+# Gazebo Fortress and its ROS bridge, for the go2_sim simulator (same layer as
+# docker/Dockerfile). Published for both arm64 and amd64.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-ros-gz && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN curl -fsSL https://install.julialang.org | sh -s -- --yes
 ENV PATH="/root/.juliaup/bin:${PATH}"
 # Pinned to match go2_map_viewer_julia/Manifest.toml's julia_version - an
