@@ -10,20 +10,25 @@ The simulator is a pretend Oak in a pretend flat, inside Gazebo (a robot simulat
 
 Part of: [Lab setup](lab-setup.md)
 
-> **Get it running** (from the repo root; until this is merged, first `git fetch && git switch max/feat/go2-sim`)
+> **Get it running.** Run every line from a fresh terminal at the repo root. Until this is merged, first `git fetch && git switch max/feat/go2-sim`.
 >
+> **On this branch alone the auto mapper stalls at about 5% of the map**, because of recovery bugs. The fixes are in branch `max/fix/explorer-recovery` (pending review). Driving by hand and the other tests work now.
+>
+> 0. **Stop the robot stack first** (WSL: `cd docker && docker compose down`; PowerShell: `cd docker; docker compose -f docker-compose.windows.yml down`; Mac: Ctrl-C any running `robot.launch.py`). The sim and the robot stack share build folders.
 > 1. **Rebuild the image once:** it adds Gazebo, about 1 GB to download. On a 16-core desktop the rebuild took about 11 minutes; a laptop is slower. The image ends up around 14 GB.
->    - Windows/WSL: `cd docker && docker compose build && docker compose run --rm unitree_ros true`
+>    - WSL: `cd docker && docker compose build && docker compose run --rm unitree_ros true`
+>    - Windows PowerShell: `cd docker; docker compose -f docker-compose.windows.yml build; docker compose -f docker-compose.windows.yml run --rm unitree_ros true`
 >    - Mac: `bash docker/mac/go2.sh build && bash docker/mac/go2.sh up`
-> 2. **Watch one run** (needs RViz windows working: [WSL and Windows](wsl.md), [Mac setup](mac-setup.md)):
->    - Windows/WSL: `docker compose run --rm unitree_ros ros2 launch go2_sim sim.launch.py rviz:=true explore:=true`
+> 2. **Watch one run** (needs RViz windows working: [WSL and Windows](wsl.md), [Mac setup](mac-setup.md)). PowerShell has no windows, so watching is WSL or Mac only.
+>    - WSL: `cd docker && docker compose run --rm unitree_ros ros2 launch go2_sim sim.launch.py rviz:=true explore:=true`
 >    - Mac: `docker compose -f docker/mac/compose.yaml exec unitree_ros bash -ic 'ros2 launch go2_sim sim.launch.py rviz:=true explore:=true'`
 >    - Add `gui:=true` for the Gazebo window too. Without an NVIDIA card it halves the simulator's speed (below).
 > 3. **Run the 10 trials** (no windows; about 45-60 minutes):
->    - Windows/WSL: `docker compose run --rm unitree_ros ros2 run go2_sim trials`
+>    - WSL: `cd docker && docker compose run --rm unitree_ros ros2 run go2_sim trials`
+>    - Windows PowerShell: `cd docker; docker compose -f docker-compose.windows.yml run --rm unitree_ros ros2 run go2_sim trials`
 >    - Mac: `docker compose -f docker/mac/compose.yaml exec unitree_ros bash -ic 'ros2 run go2_sim trials'`
 >
-> No NVIDIA card is needed. Tested on 2026-10-28 with no GPU at all, software rendering, 4 CPUs and 6 GB: headless runs kept real-time speed (factor 1.0, about 2 CPUs, at most 1.8 GB). RViz-only watching ran at 0.9. The Gazebo window plus RViz ran at 0.55 and used up to 2.5 GB. The Mac lines are untested: TODO(Adib): try them on a Mac.
+> No NVIDIA card is needed. Tested on 2026-10-28 with no GPU at all, software rendering, 4 CPUs and 6 GB: headless runs kept real-time speed (factor 1.0, about 2 CPUs, at most 1.8 GB). RViz-only watching ran at 0.9. The Gazebo window plus RViz ran at 0.55 and used up to 2.5 GB. The PowerShell and Mac lines are untested: TODO(Adib): try them on a Mac.
 
 ## How it works
 
