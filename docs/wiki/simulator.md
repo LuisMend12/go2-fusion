@@ -10,7 +10,7 @@ The simulator is a pretend Oak in a pretend flat, inside Gazebo (a robot simulat
 
 Part of: [Lab setup](lab-setup.md)
 
-> **Get it running.** Run every line from a fresh terminal at the repo root. Until this is merged, first `git fetch && git switch max/feat/go2-sim`.
+> **Get it running.** Run every line from a fresh terminal at the repo root. First `git switch master && git pull`.
 >
 > **On this branch alone the auto mapper stalls at about 5% of the map**, because of recovery bugs. The fixes are in branch `max/fix/explorer-recovery` (pending review). Driving by hand and the other tests work now.
 >
