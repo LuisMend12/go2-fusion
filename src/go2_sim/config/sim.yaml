@@ -1,0 +1,30 @@
+# Dials for the simulated Oak driver (sim_driver.py). Launch arguments of the
+# same name in sim.launch.py override the most used ones. docs/wiki/simulator.md
+# explains each. TODO(owner): measure the real values on Oak.
+go2_sim_driver:
+  ros__parameters:
+    # Odometry error. Noise grows with the square root of distance (or turn),
+    # so 0.01 means about 1 cm after 1 m and 5 cm after 25 m.
+    odom_noise_xy: 0.01      # m per sqrt(m) travelled
+    odom_noise_yaw: 0.01     # rad per sqrt(rad) turned
+    odom_scale_xy: 0.0       # 0.02 = odometry says 2 % farther than true
+    odom_scale_yaw: 0.0      # 0.02 = odometry says 2 % more turn than true
+    odom_drift_yaw: 0.0      # rad of heading drift per metre walked
+    odom_rate: 15.0          # Hz; the real driver gives about 13 (driver.md)
+    base_height: 0.32        # m, base_link above the floor
+    # Commands
+    cmd_latency: 0.1         # s between /cmd_vel_out and Oak starting to move
+    cmd_timeout: 0.5         # s without a command before Oak stops
+    max_vel_x: 1.0
+    max_vel_y: 0.6
+    max_vel_yaw: 2.0
+    max_accel_xy: 1.5        # m/s^2 (0 = instant)
+    max_accel_yaw: 3.0       # rad/s^2 (0 = instant)
+    # Lidar mount: go2.urdf's radar_joint
+    lidar_x: 0.28945
+    lidar_y: 0.0
+    lidar_z: -0.046825
+    lidar_range: 12.0
+    self_filter_x: 0.32      # drop points of Oak's own head and legs
+    self_filter_y: 0.18
+    seed: 0                  # 0 = different noise every run

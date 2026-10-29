@@ -1,0 +1,135 @@
+<?xml version="1.0"?>
+<!--
+  Oak (Unitree Go2) for the simulator: one body moved by velocity commands, no
+  legs to simulate. Oak's own computer does the walking; our stack only ever
+  sends it velocity commands, so this is what the stack can tell apart.
+
+  The model origin is base_link, $base_height m above the floor.
+  Dollar-sign fields are filled by sim.launch.py (world_tools.render_robot).
+-->
+<model name="oak">
+  <link name="body">
+    <inertial>
+      <mass>15.0</mass>
+      <inertia>
+        <ixx>0.15</ixx><iyy>0.65</iyy><izz>0.7</izz>
+        <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+      </inertia>
+    </inertial>
+
+    <!-- What stands on the floor: a thin, frictionless slab where the feet are.
+         Frictionless so the velocity commands, not friction, decide motion. -->
+    <collision name="feet">
+      <pose>0 0 ${feet_z} 0 0 0</pose>
+      <geometry><box><size>0.60 0.26 0.04</size></box></geometry>
+      <surface><friction><ode><mu>0</mu><mu2>0</mu2></ode></friction></surface>
+    </collision>
+
+    <!-- The bumper: the real Go2's footprint (0.70 x 0.31 m), from 8 cm above
+         the floor up to the top of the body. Anything touching it is a
+         collision; it never touches the floor, so no floor filtering needed. -->
+    <collision name="bumper">
+      <pose>0 0 ${bumper_z} 0 0 0</pose>
+      <geometry><box><size>0.70 0.31 ${bumper_h}</size></box></geometry>
+      <surface><friction><ode><mu>0</mu><mu2>0</mu2></ode></friction></surface>
+    </collision>
+
+    <visual name="trunk">
+      <visibility_flags>2</visibility_flags>
+      <pose>0 0 0.02 0 0 0</pose>
+      <geometry><box><size>0.40 0.20 0.12</size></box></geometry>
+      <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+    </visual>
+    <visual name="head">
+      <visibility_flags>2</visibility_flags>
+      <pose>0.25 0 0.05 0 0 0</pose>
+      <geometry><box><size>0.10 0.12 0.09</size></box></geometry>
+      <material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material>
+    </visual>
+    <visual name="leg_fl">
+      <visibility_flags>2</visibility_flags>
+      <pose>0.19 0.13 ${leg_z} 0 0 0</pose>
+      <geometry><cylinder><radius>0.025</radius><length>${leg_len}</length></cylinder></geometry>
+    </visual>
+    <visual name="leg_fr">
+      <visibility_flags>2</visibility_flags>
+      <pose>0.19 -0.13 ${leg_z} 0 0 0</pose>
+      <geometry><cylinder><radius>0.025</radius><length>${leg_len}</length></cylinder></geometry>
+    </visual>
+    <visual name="leg_rl">
+      <visibility_flags>2</visibility_flags>
+      <pose>-0.19 0.13 ${leg_z} 0 0 0</pose>
+      <geometry><cylinder><radius>0.025</radius><length>${leg_len}</length></cylinder></geometry>
+    </visual>
+    <visual name="leg_rr">
+      <visibility_flags>2</visibility_flags>
+      <pose>-0.19 -0.13 ${leg_z} 0 0 0</pose>
+      <geometry><cylinder><radius>0.025</radius><length>${leg_len}</length></cylinder></geometry>
+    </visual>
+
+    <!-- Lidar where go2.urdf puts the `radar` frame (under the chin), level.
+         sim_driver moves its points into the odom frame, like the real driver. -->
+    <sensor name="lidar" type="gpu_lidar">
+      <pose>0.28945 0 -0.046825 0 0 0</pose>
+      <topic>/sim/lidar</topic>
+      <update_rate>${lidar_rate}</update_rate>
+      <always_on>1</always_on>
+      <visualize>false</visualize>
+      <lidar>
+        <!-- Skip Oak's own visuals (visibility flag 2): its legs would cast
+             shadows where /scan has no reading. The real cloud has no
+             points on Oak's body either. -->
+        <visibility_mask>4294967293</visibility_mask>
+        <scan>
+          <horizontal>
+            <samples>${lidar_samples}</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>16</samples>
+            <resolution>1</resolution>
+            <min_angle>-0.2618</min_angle>
+            <max_angle>0.5236</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>0.05</min>
+          <max>${lidar_range}</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>${lidar_noise}</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+
+    <sensor name="bumper_contact" type="contact">
+      <topic>/sim/bumper</topic>
+      <update_rate>20</update_rate>
+      <always_on>1</always_on>
+      <contact>
+        <collision>bumper</collision>
+      </contact>
+    </sensor>
+  </link>
+
+  <!-- Moves the whole model at the commanded forward, sideways and turn speed. -->
+  <plugin filename="ignition-gazebo-velocity-control-system"
+          name="ignition::gazebo::systems::VelocityControl">
+    <topic>/model/oak/cmd_vel</topic>
+  </plugin>
+
+  <!-- True pose, for sim_driver (which adds the odometry error) and scoring. -->
+  <plugin filename="ignition-gazebo-odometry-publisher-system"
+          name="ignition::gazebo::systems::OdometryPublisher">
+    <odom_frame>world</odom_frame>
+    <robot_base_frame>oak</robot_base_frame>
+    <odom_publish_frequency>50</odom_publish_frequency>
+    <odom_topic>/model/oak/odometry</odom_topic>
+    <tf_topic>/model/oak/tf</tf_topic>
+  </plugin>
+</model>

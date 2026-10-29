@@ -1,0 +1,32 @@
+# ros_gz_bridge topics between Gazebo Fortress and ROS for the simulated Oak.
+# Only sim_driver and the trial runner use these /sim/* topics; the rest of
+# the stack sees the same topics as with the real robot (sim_driver.py).
+- ros_topic_name: /sim/cmd_vel
+  gz_topic_name: /model/oak/cmd_vel
+  ros_type_name: geometry_msgs/msg/Twist
+  gz_type_name: ignition.msgs.Twist
+  direction: ROS_TO_GZ
+
+- ros_topic_name: /sim/ground_truth/odom
+  gz_topic_name: /model/oak/odometry
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: ignition.msgs.Odometry
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /sim/lidar/points
+  gz_topic_name: /sim/lidar/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: ignition.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /sim/bumper
+  gz_topic_name: /sim/bumper
+  ros_type_name: ros_gz_interfaces/msg/Contacts
+  gz_type_name: ignition.msgs.Contacts
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /clock
+  gz_topic_name: /clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: ignition.msgs.Clock
+  direction: GZ_TO_ROS

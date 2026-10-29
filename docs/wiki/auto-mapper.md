@@ -74,6 +74,7 @@ Part of: [Maps and navigation](maps-nav.md)
 - [twist_mux](twist-mux.md) - recovery moves and waits for people on `/cmd_vel_mapper` (priority 6).
 - [Object detection](object-detection.md) - reads `/people` (people, their walking forecast and groups, `odom` frame).
 - [RViz panels](rviz-panels.md) - the AutoMapper panel starts and stops it.
+- [Simulator](simulator.md) - try it with no robot, or score it over 10 runs.
 
 ## How it breaks
 
