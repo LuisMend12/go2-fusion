@@ -67,6 +67,7 @@ Part of: [Maps and navigation](maps-nav.md)
 - [Lidar](lidar.md) - reads `/scan` and `/point_cloud2` to check it is safe to move.
 - [twist_mux](twist-mux.md) - recovery moves on `/cmd_vel_mapper` (priority 6).
 - [RViz panels](rviz-panels.md) - the AutoMapper panel starts and stops it.
+- [Simulator](simulator.md) - try it with no robot, or score it over 10 runs.
 
 ## How it breaks
 

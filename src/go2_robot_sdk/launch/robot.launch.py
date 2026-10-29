@@ -90,6 +90,9 @@ class Go2NodeFactory:
             DeclareLaunchArgument('foxglove', default_value='true', description='Launch Foxglove Bridge'),
             DeclareLaunchArgument('joystick', default_value='true', description='Launch joystick'),
             DeclareLaunchArgument('teleop', default_value='true', description='Launch teleoperation'),
+            # go2_sim sets this false and runs its own stand-in driver.
+            DeclareLaunchArgument('driver', default_value='true',
+                                  description='Launch the robot driver (false in the simulator)'),
         ]
     
     def create_robot_state_nodes(self) -> List[Node]:
@@ -201,6 +204,7 @@ class Go2NodeFactory:
                 executable='go2_driver_node',
                 name='go2_driver_node',
                 output='screen',
+                condition=IfCondition(LaunchConfiguration('driver', default='true')),
                 parameters=[{
                     'robot_ip': self.config.robot_ip,
                     'token': self.config.robot_token,

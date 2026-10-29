@@ -26,7 +26,7 @@ The code is split into layers: `domain/` (plain data and constants, like the rob
 - `ROBOT_AES_KEY` - only for firmware 1.1.15 and newer. Never commit it.
 
 **The default launch file** `robot.launch.py` is what Docker runs on start. Besides the driver it starts the robot model publisher, a lidar-to-laser-scan converter (`/scan`), the lidar processor, a text-to-speech node, the gamepad nodes, [twist_mux](twist-mux.md), RViz, Foxglove Bridge (a data viewer you open in a browser or app), SLAM and Nav2.
-Turn parts off with arguments such as `rviz2:=false`, `nav2:=false`, `slam:=false`, `foxglove:=false`, `joystick:=false`, `teleop:=false`.
+Turn parts off with arguments such as `rviz2:=false`, `nav2:=false`, `slam:=false`, `foxglove:=false`, `joystick:=false`, `teleop:=false`. `driver:=false` leaves out the driver itself; the [Simulator](simulator.md) uses it to run the same stack with its own stand-in driver.
 Other launch files (`robot_cpp`, `navigation`, `mapping`, `webrtc_web`) are variants; note `webrtc_web.launch.py` skips twist_mux.
 
 **Configs** live in `config/`: `twist_mux.yaml`, `joystick.yaml`, `nav2_params.yaml`, `mapper_params_online_async.yaml` (SLAM) and the RViz layouts.
