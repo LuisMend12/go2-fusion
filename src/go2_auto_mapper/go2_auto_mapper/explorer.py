@@ -18,6 +18,7 @@ from nav_msgs.msg import OccupancyGrid
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped, Twist
 from sensor_msgs.msg import Image, LaserScan, PointCloud2
+from std_msgs.msg import String
 from go2_auto_mapper.recovery import (
     RECOVERY_SPEED_MPS,
     RECOVERY_TIME_LIMIT_SEC,
@@ -54,6 +55,7 @@ from go2_auto_mapper.frontier_scoring import (
     visit_utility,
     world_key,
 )
+from go2_auto_mapper.social_space import line_crosses, parse_people, social_zones, zone_at
 from go2_auto_mapper.vlm_ranking import ViewMemory, VlmClient, match_score, vlm_bonus
 
 
@@ -2321,6 +2323,16 @@ ESCAPE_COOLDOWN_SEC = 30.0
 
 # "No usable goal" this many loops in a row counts as stuck.
 STUCK_NO_GOAL_CYCLES = 2
+
+# object_detection publishes /people in this frame.
+PEOPLE_FRAME = 'odom'
+# /people older than this is ignored: the people have moved on.
+PEOPLE_MAX_AGE_SEC = 2.0
+# How far ahead a person makes the robot wait, and for how long at most.
+# The wait must stay under Nav2's progress checker (10 s,
+# movement_time_allowance in nav2_params.yaml) or Nav2 aborts the goal.
+YIELD_LOOKAHEAD_M = 1.5
+YIELD_MAX_SEC = 6.0
 
 # choose_frontier's answer while active VLM mode waits for a ranking.
 WAITING_FOR_VLM = object()
