@@ -1,0 +1,152 @@
+import json
+import math
+import time
+import urllib.error
+
+from go2_auto_mapper.vlm_ranking import (
+    NEUTRAL_SCORE,
+    Ranking,
+    ViewMemory,
+    VlmClient,
+    build_request,
+    heading_bin,
+    match_score,
+    merge_scores,
+    parse_reply,
+    vlm_bonus,
+)
+
+
+def wait_for_result(client, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = client.take_result()
+        if result is not None:
+            return result
+        time.sleep(0.01)
+    raise AssertionError('no result from the background thread')
+
+
+def test_heading_bins_split_a_full_turn():
+    assert heading_bin(0.0, 8) == 0
+    assert heading_bin(math.pi / 2, 8) == 2
+    assert heading_bin(-math.pi / 2, 8) == 6   # negative yaw wraps around
+    assert heading_bin(2.0 * math.pi, 8) == 0
+
+
+def test_view_toward_picks_the_closest_heading():
+    views = ViewMemory(bins=8)
+    views.remember(0.0, 0.0, 0.0, 'east', now=10.0)
+    views.remember(0.0, 0.0, math.pi / 2, 'north', now=10.0)
+    frame = views.view_toward(0.0, 0.0, math.radians(80), 11.0, 1.0, math.radians(35), 60.0)
+    assert frame == 'north'
+
+
+def test_view_toward_rejects_far_old_or_off_angle_views():
+    views = ViewMemory(bins=8)
+    views.remember(0.0, 0.0, 0.0, 'east', now=10.0)
+    args = (math.radians(35), 60.0)
+    assert views.view_toward(5.0, 0.0, 0.0, 11.0, 1.0, *args) is None   # robot moved
+    assert views.view_toward(0.0, 0.0, 0.0, 100.0, 1.0, *args) is None  # too old
+    assert views.view_toward(0.0, 0.0, math.pi, 11.0, 1.0, *args) is None  # wrong way
+
+
+def test_newer_view_replaces_older_in_same_heading():
+    views = ViewMemory(bins=8)
+    views.remember(0.0, 0.0, 0.0, 'old', now=1.0)
+    views.remember(0.0, 0.0, 0.1, 'new', now=2.0)
+    assert views.view_toward(0.0, 0.0, 0.0, 3.0, 1.0, 0.5, 60.0) == 'new'
+
+
+def test_request_carries_one_image_per_candidate():
+    payload = build_request('qwen', [b'a', b'b'])
+    content = payload['messages'][0]['content']
+    images = [part for part in content if part['type'] == 'image_url']
+    assert payload['model'] == 'qwen'
+    assert len(images) == 2
+    assert images[0]['image_url']['url'].startswith('data:image/jpeg;base64,')
+    assert '2 images' in content[0]['text']
+
+
+def test_parse_reply_reads_json_inside_prose():
+    text = 'Sure!\n```json\n{"scores": [0.9, 0.1], "reason": "door on the left"}\n```'
+    scores, reason = parse_reply(text, 2)
+    assert scores == [0.9, 0.1]
+    assert reason == 'door on the left'
+
+
+def test_parse_reply_clamps_scores():
+    scores, _ = parse_reply('{"scores": [1.7, -2]}', 2)
+    assert scores == [1.0, 0.0]
+
+
+def test_parse_reply_rejects_bad_replies():
+    assert parse_reply('no json here', 2)[0] is None
+    assert parse_reply('{"answer": 1}', 2)[0] is None
+    assert parse_reply('{"scores": ["high", 0.2]}', 2)[0] is None
+    assert parse_reply('{"scores": [0.5]}', 2)[0] is None   # wrong count
+    assert parse_reply(None, 1)[0] is None
+
+
+def test_candidates_without_a_view_get_the_neutral_score():
+    assert merge_scores([True, False, True], [0.9, 0.2]) == [0.9, NEUTRAL_SCORE, 0.2]
+
+
+def test_bonus_is_zero_for_a_neutral_score():
+    assert vlm_bonus(NEUTRAL_SCORE, 400.0) == 0.0
+    assert vlm_bonus(1.0, 400.0) == 200.0
+    assert vlm_bonus(0.0, 400.0) == -200.0
+
+
+def test_match_score_finds_goals_that_moved_a_little():
+    ranking = Ranking([(0.0, 0.0), (3.0, 0.0)], [0.9, 0.2], '', 0.0)
+    assert match_score(ranking, 0.2, 0.1, 0.5) == 0.9
+    assert match_score(ranking, 3.1, 0.0, 0.5) == 0.2
+    assert match_score(ranking, 1.5, 0.0, 0.5) is None
+    assert match_score(Ranking([(0.0, 0.0)], None, 'failed', 0.0), 0.0, 0.0, 0.5) is None
+    assert match_score(None, 0.0, 0.0, 0.5) is None
+
+
+def test_client_scores_in_the_background():
+    sent = {}
+
+    def fake_post(url, payload, timeout, api_key):
+        sent['images'] = sum(
+            part['type'] == 'image_url' for part in payload['messages'][0]['content']
+        )
+        return json.dumps({'scores': [0.8, 0.3], 'reason': 'hallway'})
+
+    client = VlmClient('http://x', 'm', 1.0, encode=lambda f: f, post=fake_post)
+    assert client.submit([(0, 0), (1, 0), (2, 0)], [b'a', None, b'c'])
+    result = wait_for_result(client)
+    assert sent['images'] == 2   # the candidate with no view is not sent
+    assert result.scores == [0.8, NEUTRAL_SCORE, 0.3]
+    assert result.reason == 'hallway'
+    assert client.take_result() is None   # a result is handed out once
+
+
+def test_client_reports_a_down_server_instead_of_raising():
+    def failing_post(url, payload, timeout, api_key):
+        raise urllib.error.URLError('connection refused')
+
+    client = VlmClient('http://x', 'm', 1.0, encode=lambda f: f, post=failing_post)
+    client.submit([(0, 0)], [b'a'])
+    result = wait_for_result(client)
+    assert result.scores is None
+    assert 'connection refused' in result.reason
+
+
+def test_client_runs_one_request_at_a_time():
+    release = []
+
+    def slow_post(url, payload, timeout, api_key):
+        while not release:
+            time.sleep(0.01)
+        return '{"scores": [0.5]}'
+
+    client = VlmClient('http://x', 'm', 1.0, encode=lambda f: f, post=slow_post)
+    assert client.submit([(0, 0)], [b'a'])
+    assert client.busy()
+    assert not client.submit([(0, 0)], [b'a'])
+    release.append(True)
+    wait_for_result(client)

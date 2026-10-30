@@ -2,6 +2,7 @@
 
 import ctypes
 import math
+import os
 import signal
 import time
 
@@ -16,8 +17,7 @@ from action_msgs.srv import CancelGoal
 from nav_msgs.msg import OccupancyGrid
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped, Twist
-from sensor_msgs.msg import LaserScan, PointCloud2
-from std_msgs.msg import String
+from sensor_msgs.msg import Image, LaserScan, PointCloud2
 from go2_auto_mapper.recovery import (
     RECOVERY_SPEED_MPS,
     RECOVERY_TIME_LIMIT_SEC,
@@ -54,7 +54,7 @@ from go2_auto_mapper.frontier_scoring import (
     visit_utility,
     world_key,
 )
-from go2_auto_mapper.social_space import line_crosses, parse_people, social_zones, zone_at
+from go2_auto_mapper.vlm_ranking import ViewMemory, VlmClient, match_score, vlm_bonus
 
 
 class FrontierExplorer(Node):
@@ -86,6 +86,20 @@ class FrontierExplorer(Node):
         self.declare_parameter('info_gain_range', 4.0)
         self.declare_parameter('info_gain_rays', 48)
         self.declare_parameter('info_gain_cells_per_meter', 100.0)
+
+        # A vision-language model on a GPU server re-ranks the best goals
+        # from the camera's view toward each (vlm_ranking.py). 'off': not
+        # used. 'shadow': asked, and its pick logged next to ours, but ours
+        # is used. 'active': its score is added to ours, worth vlm_weight
+        # cells from a sure no to a sure yes. vlm_url is an OpenAI-compatible
+        # chat endpoint (vLLM, Ollama); VLM_API_KEY in the environment is
+        # sent if the server needs one.
+        self.declare_parameter('vlm_mode', 'off')
+        self.declare_parameter('vlm_url', 'http://localhost:8000/v1/chat/completions')
+        self.declare_parameter('vlm_model', 'Qwen/Qwen2.5-VL-7B-Instruct')
+        self.declare_parameter('vlm_weight', 400.0)
+        self.declare_parameter('vlm_timeout', 8.0)
+        self.declare_parameter('vlm_candidates', 4)
 
         # A full turn in place gives SLAM a 360 degree lidar view, so it can
         # place the robot on the map before (and after) each leg of exploring.
@@ -355,6 +369,8 @@ class FrontierExplorer(Node):
         self.scan_service = self.create_service(
             Trigger, '~/scan', self.handle_scan_request
         )
+
+        self.setup_vlm()
 
         self.get_logger().info(
             'Go2 Frontier Explorer started.'
@@ -787,11 +803,153 @@ class FrontierExplorer(Node):
                 ) + c[1:]
                 for c in pool
             ]
+            if self.vlm_client is not None:
+                pool = self.rank_with_vlm(pool, robot_x, robot_y)
+                if pool is None:
+                    return WAITING_FOR_VLM
 
         best = min(pool, key=lambda c: c[0])
 
         # (score, x, y, frontier size, frontier cells)
         return best[:4] + (best[8],)
+
+    # ==========================================================
+    # VLM FRONTIER RANKING (vlm_ranking.py)
+    # ==========================================================
+
+    def setup_vlm(self):
+        """Camera subscription and server client, unless vlm_mode is off."""
+
+        self.vlm_client = None
+        self.vlm_mode = self.get_parameter('vlm_mode').value
+        if self.vlm_mode == 'off':
+            return
+        if self.vlm_mode not in ('shadow', 'active'):
+            self.get_logger().warn(
+                f"Unknown vlm_mode '{self.vlm_mode}' (off, shadow or active); "
+                'not using the VLM.'
+            )
+            return
+
+        url = self.get_parameter('vlm_url').value
+        self.vlm_weight = self.get_parameter('vlm_weight').value
+        self.vlm_timeout = self.get_parameter('vlm_timeout').value
+        self.vlm_candidates = max(1, self.get_parameter('vlm_candidates').value)
+        self.vlm_client = VlmClient(
+            url,
+            self.get_parameter('vlm_model').value,
+            self.vlm_timeout,
+            encode_jpeg,
+            api_key=os.environ.get('VLM_API_KEY'),
+        )
+        self.vlm_ranking = None
+        self.vlm_wait_started = None
+        self.vlm_retry_after = 0.0
+        self.views = ViewMemory(bins=VIEW_BINS)
+        self.last_view_time = 0.0
+        self.camera_sub = self.create_subscription(
+            Image, '/camera/image_raw', self.camera_callback,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        )
+        self.get_logger().info(f'VLM ranking in {self.vlm_mode} mode, asking {url}.')
+
+    def camera_callback(self, msg):
+        """Remember the frame by the heading it was taken at. A few per
+        second is plenty: the robot turns a full circle in about 10 s."""
+
+        now = time.monotonic()
+        if now - self.last_view_time < VIEW_PERIOD_SEC:
+            return
+        pose = self.get_robot_pose(self.map_frame)
+        if pose is None:
+            return
+        self.last_view_time = now
+        self.views.remember(*pose, msg, now)
+
+    def rank_with_vlm(self, pool, robot_x, robot_y):
+        """The pool with the VLM's opinion added to the best few scores, the
+        pool unchanged if the VLM can't help now, or None (active mode
+        only) to wait one more loop for an answer that is on its way.
+        """
+
+        now = time.monotonic()
+        result = self.vlm_client.take_result()
+        if result is not None:
+            if result.scores is None:
+                self.get_logger().warn(
+                    f'VLM gave no ranking ({result.reason}); using the map '
+                    f'score alone for {VLM_RETRY_SEC:.0f} s.'
+                )
+                self.vlm_retry_after = now + VLM_RETRY_SEC
+            else:
+                self.vlm_ranking = result
+
+        top = sorted(pool, key=lambda c: c[0])[:self.vlm_candidates]
+        fresh = (
+            self.vlm_ranking is not None
+            and now - self.vlm_ranking.finished_at < VLM_RESULT_MAX_AGE_SEC
+        )
+        scores = [
+            match_score(self.vlm_ranking, c[1], c[2], VLM_MATCH_RADIUS_M) if fresh else None
+            for c in top
+        ]
+
+        if None in scores:
+            if now < self.vlm_retry_after:
+                return pool
+            if not self.vlm_client.busy() and not self.ask_vlm(top, robot_x, robot_y):
+                return pool
+            # Bounded per goal choice, not per request: goals that shift
+            # with each map update must not keep the robot waiting.
+            if self.vlm_wait_started is None:
+                self.vlm_wait_started = now
+            if self.vlm_mode == 'active' and now - self.vlm_wait_started < self.vlm_timeout:
+                self.get_logger().info(
+                    'Waiting for the VLM ranking...', throttle_duration_sec=5.0
+                )
+                return None
+            self.vlm_wait_started = None
+            return pool
+
+        self.vlm_wait_started = None
+
+        ranked = [
+            (c[0] - vlm_bonus(s, self.vlm_weight),) + c[1:]
+            for c, s in zip(top, scores)
+        ]
+        ours = top[0]
+        theirs = min(ranked, key=lambda c: c[0])
+        verdict = 'agrees' if theirs[1:3] == ours[1:3] else 'differs'
+        self.get_logger().info(
+            f'VLM {verdict}: map score picks ({ours[1]:.2f}, {ours[2]:.2f}), '
+            f'with VLM ({theirs[1]:.2f}, {theirs[2]:.2f}). Scores '
+            f'{[round(s, 2) for s in scores]}: {self.vlm_ranking.reason}'
+        )
+        # Spent: the next goal is asked about from wherever the robot is then.
+        self.vlm_ranking = None
+        return pool if self.vlm_mode == 'shadow' else ranked
+
+    def ask_vlm(self, top, robot_x, robot_y):
+        """Send the camera views toward the best goals; False if there are
+        none to send (e.g. the robot hasn't turned around here yet)."""
+
+        now = time.monotonic()
+        frames = [
+            self.views.view_toward(
+                robot_x, robot_y,
+                math.atan2(c[2] - robot_y, c[1] - robot_x),
+                now, VIEW_MAX_OFFSET_M, VIEW_MAX_ANGLE_RAD, VIEW_MAX_AGE_SEC,
+            )
+            for c in top
+        ]
+        if all(frame is None for frame in frames):
+            self.get_logger().info(
+                'No camera view toward any goal yet; using the map score.',
+                throttle_duration_sec=10.0
+            )
+            return False
+        self.vlm_client.submit([(c[1], c[2]) for c in top], frames)
+        return True
 
     def revealed_from(self, x, y):
         """Unknown cells the lidar would see from world point (x, y)."""
@@ -2012,9 +2170,12 @@ class FrontierExplorer(Node):
             robot_y
         )
 
+        if selected is WAITING_FOR_VLM:
+            return
+
         if selected is None:
             self.get_logger().info(
-                'No usable goal: every frontier is too close to a wall or '
+                'No usable goal:every frontier is too close to a wall or '
                 'failed recently. Waiting for the map to change or for '
                 f'failed spots to expire ({self.failed_goal_cooldown_sec:.0f} s).',
                 throttle_duration_sec=10.0
@@ -2161,15 +2322,50 @@ ESCAPE_COOLDOWN_SEC = 30.0
 # "No usable goal" this many loops in a row counts as stuck.
 STUCK_NO_GOAL_CYCLES = 2
 
-# object_detection publishes /people in this frame.
-PEOPLE_FRAME = 'odom'
-# /people older than this is ignored: the people have moved on.
-PEOPLE_MAX_AGE_SEC = 2.0
-# How far ahead a person makes the robot wait, and for how long at most.
-# The wait must stay under Nav2's progress checker (10 s,
-# movement_time_allowance in nav2_params.yaml) or Nav2 aborts the goal.
-YIELD_LOOKAHEAD_M = 1.5
-YIELD_MAX_SEC = 6.0
+# choose_frontier's answer while active VLM mode waits for a ranking.
+WAITING_FOR_VLM = object()
+
+# Camera views kept for the VLM: one per 45 degrees of heading, a few per
+# second at most. A view counts toward a goal if it was taken within
+# VIEW_MAX_OFFSET_M of where the robot is now, in the last VIEW_MAX_AGE_SEC,
+# and faces within VIEW_MAX_ANGLE_RAD of the goal (inside a ~90 degree
+# camera view).
+VIEW_BINS = 8
+VIEW_PERIOD_SEC = 0.3
+VIEW_MAX_OFFSET_M = 1.0
+VIEW_MAX_AGE_SEC = 120.0
+VIEW_MAX_ANGLE_RAD = math.radians(35.0)
+
+# A VLM ranking applies to goals within VLM_MATCH_RADIUS_M of the ones it
+# was asked about, for VLM_RESULT_MAX_AGE_SEC. After a failed request, the
+# map score is used alone for VLM_RETRY_SEC before asking again.
+VLM_MATCH_RADIUS_M = 0.5
+VLM_RESULT_MAX_AGE_SEC = 30.0
+VLM_RETRY_SEC = 30.0
+
+# Images sent to the VLM are shrunk to this width: plenty for "doorway or
+# wall", and it keeps each request small over the SSH tunnel.
+VLM_IMAGE_WIDTH = 448
+VLM_JPEG_QUALITY = 80
+
+
+def encode_jpeg(msg):
+    """A camera Image message as JPEG bytes, shrunk to VLM_IMAGE_WIDTH.
+
+    Imported here so the explorer runs without OpenCV when vlm_mode is off.
+    Runs on the VLM client's thread, not the explorer's.
+    """
+    import cv2
+    from cv_bridge import CvBridge
+
+    image = CvBridge().imgmsg_to_cv2(msg, desired_encoding='bgr8')
+    height, width = image.shape[:2]
+    if width > VLM_IMAGE_WIDTH:
+        image = cv2.resize(image, (VLM_IMAGE_WIDTH, int(height * VLM_IMAGE_WIDTH / width)))
+    ok, jpeg = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, VLM_JPEG_QUALITY])
+    if not ok:
+        raise ValueError('JPEG encoding failed')
+    return jpeg.tobytes()
 
 
 def stop_when_parent_dies():
