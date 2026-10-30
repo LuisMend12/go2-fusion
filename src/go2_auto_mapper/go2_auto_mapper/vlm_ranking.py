@@ -26,21 +26,29 @@ from go2_auto_mapper.obstacle_sensing import angle_difference
 NEUTRAL_SCORE = 0.5
 
 PROMPT = (
-    'You are helping a robot dog map an unfamiliar indoor building. Each of '
-    'the {n} images below is its camera view toward a different unexplored '
-    'area. For each one, rate from 0.0 to 1.0 how likely walking that way '
-    'reveals a lot of new space: an open doorway, a hallway or an open room '
-    'score high; a wall, a closed door, a dead end, or clutter score low. '
-    'Reply with JSON only, in this form: '
+    'You are helping a robot dog, 0.7 m long and 0.3 m wide, map an unfamiliar '
+    'indoor building. Each of the {n} images below is its camera view toward a '
+    'different unexplored area, with what its map says about that area. The map '
+    'already knows the distances and walls. Use the picture for what the map '
+    'cannot tell: rate from 0.0 to 1.0 how likely walking that way reveals a lot '
+    'of new space. An open doorway, a hallway or an open room score high; a wall, '
+    'a closed door, a dead end, or furniture score low. Chair legs and gaps under '
+    'desks are not paths. If you cannot tell, answer 0.5 and do not invent a '
+    'doorway. Reply with JSON only, in this form, with exactly {n} scores: '
     '{{"scores": [one number per image, in order], "reason": "one short sentence"}}'
 )
 
 DESCRIBE_PROMPT = (
-    'You are the camera of a small robot dog exploring a building. Describe what '
-    'you see, then suggest its next move. Reply with JSON only, in this form: '
-    '{"description": "2 short sentences: the room, objects, people, and any open '
+    'You are the camera of a robot dog, 0.7 m long and 0.3 m wide, exploring a '
+    'building to map it. Describe what you see, then suggest its next move, toward '
+    'a doorway, hallway or open room it could map. Its lidar measures distances you '
+    'cannot judge from a picture, and it only knows about what is in front of the '
+    'camera for forward. {lidar} Never suggest a direction the lidar says is under '
+    '{clear:.1f} m. Chair legs and gaps under desks are not paths. Do not invent a '
+    'doorway you cannot see. Reply with JSON only, in this form: '
+    '{{"description": "2 short sentences: the room, objects, people, and any open '
     'space or doorway", "move": "forward, left, right, turn_around or stop", '
-    '"reason": "one short sentence"}'
+    '"reason": "one short sentence"}}'
 )
 
 # Moves the model may suggest, with the direction each would walk in (radians,
@@ -108,11 +116,13 @@ class ViewMemory:
         return None if best is None else best[1]
 
 
-def build_request(model, jpegs):
-    """Chat-completions payload asking the model to score each image."""
+def build_request(model, jpegs, facts=None):
+    """Chat-completions payload asking the model to score each image. facts,
+    if given, is one line per image of what the map says about that area."""
     content = [{'type': 'text', 'text': PROMPT.format(n=len(jpegs))}]
     for i, jpeg in enumerate(jpegs, start=1):
-        content.append({'type': 'text', 'text': f'Image {i}:'})
+        fact = f' {facts[i - 1]}' if facts else ''
+        content.append({'type': 'text', 'text': f'Image {i}:{fact}'})
         content.append({
             'type': 'image_url',
             'image_url': {
@@ -124,20 +134,33 @@ def build_request(model, jpegs):
         'messages': [{'role': 'user', 'content': content}],
         'temperature': 0.0,
         'max_tokens': 200,
+        'response_format': {'type': 'json_object'},
     }
 
 
-def build_describe_request(model, jpeg):
+def lidar_sentence(ranges, angle_min, angle_increment):
+    """The lidar's distance each way, in words, for the prompt."""
+    parts = []
+    for name, bearing in (('forward', 0.0), ('left', math.pi / 2), ('right', -math.pi / 2),
+                          ('behind', math.pi)):
+        nearest = clear_distance(ranges, angle_min, angle_increment, bearing)
+        parts.append(f'{name} no reading' if nearest is None else f'{name} {nearest:.1f} m')
+    return 'Lidar distances now: ' + ', '.join(parts) + '.'
+
+
+def build_describe_request(model, jpeg, lidar='The lidar is not available now.'):
     """Chat-completions payload asking the model to describe one image."""
+    prompt = DESCRIBE_PROMPT.format(lidar=lidar, clear=MOVE_CLEAR_M)
     url = 'data:image/jpeg;base64,' + base64.b64encode(jpeg).decode('ascii')
     return {
         'model': model,
         'messages': [{'role': 'user', 'content': [
-            {'type': 'text', 'text': DESCRIBE_PROMPT},
+            {'type': 'text', 'text': prompt},
             {'type': 'image_url', 'image_url': {'url': url}},
         ]}],
         'temperature': 0.0,
         'max_tokens': 160,
+        'response_format': {'type': 'json_object'},
     }
 
 
@@ -291,12 +314,13 @@ class VlmClient:
     def busy(self):
         return self.thread is not None and self.thread.is_alive()
 
-    def submit(self, goals, frames):
-        """Ask about `goals` [(x, y)], with a camera frame (or None) each."""
+    def submit(self, goals, frames, facts=None):
+        """Ask about `goals` [(x, y)], with a camera frame (or None) each, and
+        optionally one line of what the map says about each."""
         if self.busy():
             return False
         self.thread = threading.Thread(
-            target=self._run, args=(list(goals), list(frames)), daemon=True
+            target=self._run, args=(list(goals), list(frames), facts), daemon=True
         )
         self.thread.start()
         return True
@@ -307,12 +331,14 @@ class VlmClient:
             result, self.result = self.result, None
         return result
 
-    def _run(self, goals, frames):
+    def _run(self, goals, frames, facts=None):
         has_view = [frame is not None for frame in frames]
         try:
             jpegs = [self.encode(frame) for frame in frames if frame is not None]
+            seen_facts = facts and [f for f, seen in zip(facts, has_view) if seen]
             text = self.post(
-                self.url, build_request(self.model, jpegs), self.timeout, self.api_key
+                self.url, build_request(self.model, jpegs, seen_facts), self.timeout,
+                self.api_key
             )
             scores, reason = parse_reply(text, len(jpegs))
             if scores is not None:

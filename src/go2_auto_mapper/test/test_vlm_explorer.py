@@ -23,8 +23,9 @@ class FakeClient:
     def busy(self):
         return self.is_busy
 
-    def submit(self, goals, frames):
+    def submit(self, goals, frames, facts=None):
         self.asked.append((goals, frames))
+        self.facts = facts
         self.is_busy = True
         return True
 
@@ -39,6 +40,7 @@ def explorer_stub(mode, client):
         vlm_mode=mode, vlm_client=client, vlm_weight=400.0, vlm_timeout=8.0,
         vlm_candidates=4, vlm_ranking=None, vlm_wait_started=None,
         vlm_retry_after=0.0, views=ViewMemory(bins=8), messages=messages,
+        info_gain_cells_per_meter=100.0,
     )
     logger = SimpleNamespace(
         info=lambda m, **k: messages.append(m), warn=lambda m, **k: messages.append(m))
@@ -52,7 +54,8 @@ def explorer_stub(mode, client):
 
 # (score, x, y, ...): lower score is better. The map score prefers the goal
 # to the east; the VLM will prefer the one to the north.
-POOL = [(-500.0, 3.0, 0.0, 10), (-450.0, 0.0, 3.0, 10)]
+POOL = [(-500.0, 3.0, 0.0, 10, True, True, False, 10.0, []),
+        (-450.0, 0.0, 3.0, 10, True, True, False, 10.0, [])]
 
 
 def scored(east, north):
@@ -67,6 +70,14 @@ def test_asks_with_the_view_toward_each_goal():
     goals, frames = client.asked[0]
     assert goals == [(3.0, 0.0), (0.0, 3.0)]
     assert frames == ['frame@0.0', 'frame@1.5708']
+
+
+def test_asking_tells_the_model_what_the_map_says():
+    client = FakeClient()
+    FrontierExplorer.rank_with_vlm(explorer_stub('shadow', client), POOL, 0.0, 0.0)
+    # POOL's first goal: score -500 for a 10 m walk at 100 cells a meter.
+    assert '10.0 m away' in client.facts[0]
+    assert '1500 unknown cells' in client.facts[0]
 
 
 def test_shadow_mode_logs_but_keeps_the_map_choice():
