@@ -24,7 +24,10 @@ Part of: [Maps and navigation](maps-nav.md)
 5. **Learn from it.** If a visit did not shrink the frontier (the opening can't be seen into), that frontier is skipped for 2 minutes. Failed goals are also skipped for 2 minutes.
 6. **Get unstuck.** If something is within 0.3 m of the nose, it cancels the goal and checks short moves backward, left and right against the live `/scan` and Nav2's local costmap, then slides 0.05 to 0.5 m at 0.1 m/s along the safest one. These moves go out on `/cmd_vel_mapper`, a [twist_mux](twist-mux.md) input at priority 6 (above Nav2, below keyboard and gamepad). If nothing is safe, it stays stopped and logs why.
 7. **Head for open space.** After 3 failed goals in a row (or similar signs of being stuck), it drives to the nearest spot with 0.8 m of room on every side, scans, and carries on.
-8. **Finish.** With no frontiers left it logs "Exploration complete" and waits, in case a door opens.
+8. **Let people pass.** While walking to a goal, if a person, where they are about to step, or a group is within 1.5 m straight ahead, Oak stands still (zero speed on `/cmd_vel_mapper`) for up to 6 s, then carries on and lets Nav2 steer around them. It waits again only after the way has been clear once, so someone standing in a hallway can't stop exploring.
+9. **Finish.** With no frontiers left it logs "Exploration complete" and waits, in case a door opens.
+
+**People.** When [object detection](object-detection.md) runs, it publishes `/people`: where each person is, a straight-line guess of where they will walk, and who stands together in a group (ideas from [SocialNav](https://github.com/ram95d/SocialNav)). The explorer keeps goals out of a 1 m circle around each person, out of a 0.6 m band along their next 2.4 s of walking, and out of the inside of a group (a robot should go around two people talking, not between them). A goal whose straight path crosses one of these only loses ties. This is a ranking step like the others, so a room full of people never stops exploring. Without `/people`, nothing changes.
 
 **Buttons.** The RViz AutoMapper panel has **Start/Stop**, **Scan** (pause the goal, forget recent failures, turn 360 degrees; the same as calling `/frontier_explorer/scan`) and **Reset maps** (restart SLAM with an empty 2D map and clear the 3D point cloud).
 
@@ -85,7 +88,8 @@ The model needs an NVIDIA GPU, so it runs on a cloud server, not the laptop. The
 - [SLAM](slam.md) - reads `/map` and the `map` frame.
 - [Nav2](nav2.md) - sends goals to `/navigate_to_pose`, uses `/spin` and `/backup`, reads `/local_costmap/costmap`.
 - [Lidar](lidar.md) - reads `/scan` and `/point_cloud2` to check it is safe to move.
-- [twist_mux](twist-mux.md) - recovery moves on `/cmd_vel_mapper` (priority 6).
+- [twist_mux](twist-mux.md) - recovery moves and waits for people on `/cmd_vel_mapper` (priority 6).
+- [Object detection](object-detection.md) - reads `/people` (people, their walking forecast and groups, `odom` frame).
 - [RViz panels](rviz-panels.md) - the AutoMapper panel starts and stops it.
 - [Simulator](simulator.md) - try it with no robot, or score it over 10 runs.
 - [Camera](camera.md) - with `vlm_mode` on, keeps one `/camera/image_raw` picture per direction for the VLM.
@@ -99,7 +103,9 @@ From the package README and Luis's commits (Oct 14-19):
 - **Nibbling the nearest edge.** Ranking goals by distance made it creep along the closest frontier; replaced by "most revealed per meter" on 2026-10-16.
 - **Two motions at once.** Codex reviews on 2026-10-17 found cases where a late Nav2 reply or a recovery move could override a stop; each maneuver is now tracked until Nav2 confirms it ended, and a latched stop always wins.
 - **Waits for fresh data.** After every scan or move it waits up to 20 s for newer `/scan`, `/point_cloud2`, `/map`, costmap and TF. If they don't come, exploration stays stopped until Scan is pressed.
-- **The 3D cloud never forgets** moved objects; neither SLAM nor the 3D map is cleared during recovery.
+- **The 3D cloud forgets moved objects only where Oak looks** (see [Lidar](lidar.md)); neither SLAM nor the 3D map is cleared during recovery.
+- **People positions are rough.** They come from the camera's box-height guess, and on master left and right are flipped (see [Object detection](object-detection.md)), so Oak can wait for, or steer around, a person on the wrong side. The camera only looks forward, so people behind or beside Oak are not seen. TODO(Luis): test with people in the lab.
+- **Waiting too long gets the goal dropped.** Nav2 gives up a goal after 10 s without movement (`movement_time_allowance`); the 6 s wait stays under that, so don't raise one without the other.
 - **Big maps** make each step slower, because the whole map is rescanned every cycle.
 - **VLM server down or slow** (tunnel closed, server off, wrong address): it logs "VLM gave no ranking" with the reason, uses the map score alone, and tries again after 30 s. Exploring never stops for it. In `active` mode each goal can wait up to `vlm_timeout` seconds first.
 - **VLM has nothing to look at.** The camera only sees ahead, so a spot gets a neutral score when no picture faces it (for example right after a move, before the next 360 degree turn). The VLM is new and untested on Oak (added 2026-10-28).

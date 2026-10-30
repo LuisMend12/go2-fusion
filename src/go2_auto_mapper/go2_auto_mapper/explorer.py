@@ -11,7 +11,9 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.signals import SignalHandlerOptions
 
+from action_msgs.srv import CancelGoal
 from nav_msgs.msg import OccupancyGrid
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped, Twist
@@ -68,14 +70,14 @@ class FrontierExplorer(Node):
         self.declare_parameter('robot_frame', 'base_link')
         self.declare_parameter('map_frame', 'map')
 
-        self.declare_parameter('min_frontier_size', 5)
+        self.declare_parameter('min_frontier_size', 3)
         self.declare_parameter('goal_distance', 0.8)
         # Frontiers closer than this are only used once no farther one is
         # left, so each leg covers new ground instead of shuffling in place.
         self.declare_parameter('min_goal_distance', 1.5)
         # Goals closer than this to a wall in the SLAM map are skipped:
         # Nav2 can't place the robot's body there, and it scrapes walls.
-        self.declare_parameter('wall_clearance', 0.5)
+        self.declare_parameter('wall_clearance', 0.35)
 
         # Ranking goals by what a visit would reveal (frontier_scoring.py):
         # unknown cells visible from the goal within info_gain_range, by
@@ -110,7 +112,7 @@ class FrontierExplorer(Node):
         # obstacle_stop_distance of the nose (for blocked_timeout seconds;
         # 0 = at once), back away. While driving, the goal is given up first
         # and the robot then heads somewhere open.
-        self.declare_parameter('obstacle_stop_distance', 0.3)
+        self.declare_parameter('obstacle_stop_distance', 0.15)
         self.declare_parameter('blocked_timeout', 0.0)
         self.declare_parameter('backup_distance', 0.3)
 
@@ -118,8 +120,16 @@ class FrontierExplorer(Node):
         # (or an obstacle-ahead abort, or no usable goal), drive to the
         # nearest spot with open_space_clearance meters of room on every
         # side, scan there, then carry on exploring.
-        self.declare_parameter('open_space_clearance', 0.8)
+        self.declare_parameter('open_space_clearance', 0.6)
         self.declare_parameter('stuck_failure_count', 3)
+
+        # People from object_detection's /people (ideas from SocialNav):
+        # don't pick goals in someone's personal space, across where they
+        # are walking or inside a group, and stop briefly to let a person
+        # ahead pass. Without /people nothing changes.
+        self.declare_parameter('avoid_people', True)
+        self.declare_parameter('yield_to_people', True)
+        self.declare_parameter('personal_space', 1.0)
 
         self.map_topic = self.get_parameter(
             'map_topic'
@@ -166,6 +176,9 @@ class FrontierExplorer(Node):
         self.stuck_failure_count = self.get_parameter(
             'stuck_failure_count'
         ).value
+        self.avoid_people = self.get_parameter('avoid_people').value
+        self.yield_to_people = self.get_parameter('yield_to_people').value
+        self.personal_space = self.get_parameter('personal_space').value
 
         # -----------------------------
         # Map
@@ -223,6 +236,18 @@ class FrontierExplorer(Node):
             self.local_costmap_callback,
             map_qos
         )
+
+        # (people, monotonic receipt time), from object_detection.
+        self.people = ([], None)
+        # When the robot started waiting for a person ahead, and whether this
+        # person has used up their wait (see yield_for_people).
+        self.yield_since = None
+        self.yield_spent = False
+        if self.avoid_people or self.yield_to_people:
+            self.people_sub = self.create_subscription(
+                String, '/people',
+                lambda msg: setattr(self, 'people', (parse_people(msg.data), time.monotonic())),
+                10)
 
         # -----------------------------
         # TF
@@ -318,6 +343,12 @@ class FrontierExplorer(Node):
         self.last_escape_time = None
 
         self.exploration_complete_logged = False
+
+        # Shutdown (see stop()): set once stopping starts, so nothing new moves
+        # the robot. pending_submissions holds (future, action name) for goals
+        # Nav2 hasn't accepted or rejected yet.
+        self.shutting_down = False
+        self.pending_submissions = []
 
         # Don't start immediately.
         self.timer = self.create_timer(
@@ -436,6 +467,25 @@ class FrontierExplorer(Node):
         except TransformException:
 
             return None
+
+    def people_zones(self):
+        """Circles around people, their next steps and groups, in the map
+        frame; empty when /people is stale or TF can't place it."""
+
+        people, received = self.people
+        if not people or received is None or time.monotonic() - received > PEOPLE_MAX_AGE_SEC:
+            return []
+        try:
+            t = self.tf_buffer.lookup_transform(
+                self.map_frame, PEOPLE_FRAME, rclpy.time.Time()
+            ).transform
+        except TransformException:
+            return []
+        q = t.rotation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        return social_zones(
+            people, t.translation.x, t.translation.y, yaw, personal=self.personal_space
+        )
 
     # ==========================================================
     # MAP CELL HELPERS
@@ -579,6 +629,7 @@ class FrontierExplorer(Node):
         # direction counts as open.
         view = self.local_view()
         blocked = self.recently_blocked() and self.blocked_heading is not None
+        zones = self.people_zones() if self.avoid_people else []
 
         # Skip frontiers a recent visit didn't shrink: the scan at the goal
         # couldn't see into them, so going back would just repeat that.
@@ -700,6 +751,14 @@ class FrontierExplorer(Node):
                 < BLOCKED_CONE_RAD
             )
 
+            # 2: the goal is in someone's space; 1: the straight way there
+            # crosses a person, their next steps or a group; 0: neither.
+            social = 0
+            if zone_at(goal_x, goal_y, zones) is not None:
+                social = 2
+            elif line_crosses(robot_x, robot_y, goal_x, goal_y, zones) is not None:
+                social = 1
+
             candidates.append(
                 (
                     score,
@@ -710,19 +769,21 @@ class FrontierExplorer(Node):
                     line_clear,
                     toward_blocked,
                     goal_range,
-                    frontier
+                    frontier,
+                    social
                 )
             )
 
         if not candidates:
             return None
 
-        # In order: stay away from a just-blocked direction, then walk far
-        # enough, then have a clear straight line in Nav2's costmap, then the
-        # score. Each only breaks ties of the ones before it, so exploring
-        # never stalls when no candidate is ideal.
+        # In order: stay away from a just-blocked direction, then out of
+        # people's space, then walk far enough, then have a clear straight
+        # line in Nav2's costmap and past people, then the score. Each only
+        # breaks ties of the ones before it, so exploring never stalls when
+        # no candidate is ideal.
         def tier(c):
-            return (c[6], not c[4], not c[5])
+            return (c[6], c[9] == 2, not c[4], not c[5], c[9] == 1)
 
         best_tier = min(tier(c) for c in candidates)
         pool = [c for c in candidates if tier(c) == best_tier]
@@ -1002,6 +1063,7 @@ class FrontierExplorer(Node):
         future = self.nav_client.send_goal_async(
             goal
         )
+        self._track_submission(future, 'navigate_to_pose')
 
         future.add_done_callback(
             self.goal_response_callback
@@ -1145,6 +1207,11 @@ class FrontierExplorer(Node):
         """Turn 360 degrees as soon as possible: the current goal is paused
         (not counted as failed), and failed spots are forgiven, since the
         scan gives SLAM fresh data and they may be reachable now."""
+
+        if self.shutting_down:
+            response.success = False
+            response.message = 'The explorer is shutting down.'
+            return response
 
         if self.maneuver_active and self.maneuver_name == 'Scan':
             response.success = False
@@ -1531,11 +1598,24 @@ class FrontierExplorer(Node):
         self.maneuver_time_allowance = time_allowance
 
         future = client.send_goal_async(goal)
+        self._track_submission(
+            future, 'spin' if client is self.spin_client else 'backup'
+        )
         future.add_done_callback(
             lambda f, g=generation, c=client:
             self.maneuver_response_callback(f, g, c)
         )
         return True
+
+    def _track_submission(self, future, action_name):
+        """Remember a goal Nav2 hasn't answered yet, so stop() can wait for
+        it: until accepted it has no handle to cancel."""
+
+        self.pending_submissions.append((future, action_name))
+        future.add_done_callback(
+            lambda f: self.pending_submissions.remove((f, action_name))
+            if (f, action_name) in self.pending_submissions else None
+        )
 
     def maneuver_response_callback(self, future, generation, client):
 
@@ -1757,6 +1837,8 @@ class FrontierExplorer(Node):
             if self.maneuver_active:
                 self.blocked_since = None
                 return
+            if self.yield_for_people():
+                return
 
             view = self.local_view()
             if view is None:
@@ -1809,6 +1891,42 @@ class FrontierExplorer(Node):
                 self._stop_for(f'obstacle watch error: {e}')
             else:
                 self.get_logger().error(f'Obstacle watch error: {e}')
+
+    def yield_for_people(self):
+        """While driving to a goal, hold still when a person, their next
+        steps or a group is just ahead, so they can pass. True while holding.
+
+        The wait ends after YIELD_MAX_SEC, under Nav2's 10 s progress check,
+        and is not repeated until the way ahead has been clear once: someone
+        standing still in a hallway must not stop exploring. Nav2's own
+        obstacle avoidance still applies after that."""
+
+        if not (self.yield_to_people and self.goal_active):
+            self.yield_since, self.yield_spent = None, False
+            return False
+        pose = self.get_robot_pose(self.map_frame)
+        if pose is None:
+            return False
+        x, y, yaw = pose
+        ahead = line_crosses(
+            x, y, x + YIELD_LOOKAHEAD_M * math.cos(yaw), y + YIELD_LOOKAHEAD_M * math.sin(yaw),
+            self.people_zones(),
+        )
+        if ahead is None:
+            self.yield_since, self.yield_spent = None, False
+            return False
+        if self.yield_spent:
+            return False
+        now = time.monotonic()
+        if self.yield_since is None:
+            self.yield_since = now
+            self.get_logger().info(f'A {ahead.kind} is just ahead; waiting for them to pass.')
+        if now - self.yield_since >= YIELD_MAX_SEC:
+            self.yield_spent = True
+            self.get_logger().info('Still in the way; carrying on around them.')
+            return False
+        self._hold_stop()
+        return True
 
     def back_away_while_idle(self, gap):
         """Something is right in front and the robot isn't driving anywhere:
@@ -2085,7 +2203,24 @@ class FrontierExplorer(Node):
             self.goal_frontier = (keys, len(keys))
 
     def stop(self):
+        # Nothing new may start moving the robot from here on.
+        self.shutting_down = True
+        self.timer.cancel()
+        self.watch_timer.cancel()
+        self.recovery_move = None
         self.recovery_pub.publish(Twist())
+
+        # A goal Nav2 hasn't answered yet has no handle to cancel. Wait (and
+        # spin, so the answer is processed) until it's accepted, which sets
+        # the handles cancelled below, or rejected.
+        deadline = time.monotonic() + SHUTDOWN_ACCEPT_WAIT_SEC
+        for future, action_name in list(self.pending_submissions):
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                rclpy.spin_until_future_complete(self, future, timeout_sec=remaining)
+            if not future.done():
+                self._cancel_all_goals(action_name)
+
         # Cancel whatever Nav2 goal is in flight so the robot doesn't
         # keep walking toward it after we've stopped sending new ones.
         # rclpy.spin() has already returned by the time this runs, so we
@@ -2103,6 +2238,38 @@ class FrontierExplorer(Node):
             future = self.maneuver_handle.cancel_goal_async()
             rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
 
+    def _cancel_all_goals(self, action_name):
+        """Last resort on shutdown: Nav2 never answered one of our goals, so
+        it may still accept and run it with nobody tracking it. Cancel every
+        goal on that action (a zero goal ID and stamp means all), even other
+        nodes' goals: stopping the robot is the safe outcome.
+
+        Known limit: a goal Nav2 receives only after this cancel is not
+        covered. That needs Nav2 to be failing already (no answer in
+        SHUTDOWN_ACCEPT_WAIT_SEC); the keyboard or joystick still override it.
+        """
+
+        self.get_logger().error(
+            f'Nav2 never answered a {action_name} goal; cancelling all '
+            f'{action_name} goals so the robot stops.'
+        )
+        client = self.create_client(
+            CancelGoal, f'/{action_name}/_action/cancel_goal'
+        )
+        if client.wait_for_service(timeout_sec=1.0):
+            future = client.call_async(CancelGoal.Request())
+            rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+        else:
+            self.get_logger().error(
+                f'{action_name} cancel service unavailable. Stop the robot by '
+                f'hand: ros2 service call /{action_name}/_action/cancel_goal '
+                'action_msgs/srv/CancelGoal "{}"'
+            )
+        self.destroy_client(client)
+
+
+# How long stop() waits for Nav2 to answer goals it hasn't accepted yet.
+SHUTDOWN_ACCEPT_WAIT_SEC = 2.0
 
 PR_SET_PDEATHSIG = 1  # from <linux/prctl.h>
 
@@ -2220,7 +2387,13 @@ def main(args=None):
 
     stop_when_parent_dies()
 
-    rclpy.init(args=args)
+    # rclpy's own SIGINT handler shuts the ROS context down at once, so
+    # stop() would then publish and cancel on a dead context, and Nav2 keeps
+    # driving to the last goal. Without it, SIGINT raises KeyboardInterrupt
+    # (Python's default) and stop() runs while ROS still works. SIGTERM
+    # (e.g. docker stop) is treated the same way.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
 
     node = FrontierExplorer()
 
