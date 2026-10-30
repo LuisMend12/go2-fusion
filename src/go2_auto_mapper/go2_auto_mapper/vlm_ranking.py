@@ -36,10 +36,31 @@ PROMPT = (
 )
 
 DESCRIBE_PROMPT = (
-    'You are the camera of a small robot dog. Describe what you see in 3 short '
-    'sentences: the room, objects and people, and whether there is open space '
-    'or a doorway to walk through.'
+    'You are the camera of a small robot dog exploring a building. Describe what '
+    'you see, then suggest its next move. Reply with JSON only, in this form: '
+    '{"description": "2 short sentences: the room, objects, people, and any open '
+    'space or doorway", "move": "forward, left, right, turn_around or stop", '
+    '"reason": "one short sentence"}'
 )
+
+# Moves the model may suggest, with the direction each would walk in (radians,
+# left positive) and how to say it. Stop has no direction to check.
+MOVES = {
+    'forward': (0.0, 'go forward'),
+    'left': (math.pi / 2, 'turn left'),
+    'right': (-math.pi / 2, 'turn right'),
+    'turn_around': (math.pi, 'turn around'),
+    'stop': (None, 'stop'),
+}
+# The lidar counts a direction as blocked closer than this to base_link: the
+# nose is 0.36 m ahead of it, plus room to stop.
+MOVE_CLEAR_M = 0.8
+# A suggestion older than this describes where the robot used to be.
+SUGGESTION_MAX_AGE_SEC = 15.0
+# A goal this close to the suggested heading counts as following it.
+SUGGESTION_CONE_RAD = math.radians(45.0)
+# How wide a slice of the scan a direction covers, each side.
+MOVE_CONE_RAD = math.radians(20.0)
 
 # One finished request: the goals asked about as (x, y), the score for
 # each (None if the request failed), the model's one-line reason or the
@@ -118,6 +139,74 @@ def build_describe_request(model, jpeg):
         'temperature': 0.0,
         'max_tokens': 160,
     }
+
+
+def parse_suggestion(text):
+    """(description, move, reason) from the model's reply. move is None if it
+    gave no known move; then description is whatever it said."""
+    match = re.search(r'\{.*\}', text or '', re.DOTALL)
+    try:
+        data = json.loads(match.group(0))
+        move = str(data.get('move', '')).strip().lower().replace(' ', '_')
+        return (str(data.get('description', '')),
+                move if move in MOVES else None,
+                str(data.get('reason', '')))
+    except (AttributeError, ValueError):
+        return text or '', None, ''
+
+
+def clear_distance(ranges, angle_min, angle_increment, bearing, cone=MOVE_CONE_RAD):
+    """Nearest lidar reading within cone of bearing (radians, 0 ahead), or None
+    if the scan has no valid reading there."""
+    nearest = None
+    for i, reading in enumerate(ranges):
+        if not math.isfinite(reading) or reading <= 0.0:
+            continue
+        off = (angle_min + i * angle_increment - bearing + math.pi) % (2.0 * math.pi) - math.pi
+        if abs(off) <= cone and (nearest is None or reading < nearest):
+            nearest = reading
+    return nearest
+
+
+def describe_move(move, nearest, have_scan):
+    """One line saying what the lidar thinks of a suggested move."""
+    if move is None or MOVES[move][0] is None:
+        return ''
+    if not have_scan:
+        return 'Lidar: no recent scan, not checked.'
+    if nearest is None:
+        return 'Lidar: no reading that way, not checked.'
+    if nearest < MOVE_CLEAR_M:
+        return f'Lidar: BLOCKED, something {nearest:.1f} m that way.'
+    return f'Lidar: clear for {nearest:.1f} m.'
+
+
+def suggestion_message(move, heading, nearest, now):
+    """The /vlm/suggestion JSON. heading is the map-frame direction to walk (None
+    if unknown); clear only when the lidar saw room that way."""
+    return json.dumps({
+        'move': move,
+        'heading': heading,
+        'clear': nearest is not None and nearest >= MOVE_CLEAR_M,
+        'time': now,
+    })
+
+
+def usable_heading(text, now, max_age=SUGGESTION_MAX_AGE_SEC):
+    """The map-frame heading from a /vlm/suggestion message, or None unless it
+    is recent, has a direction, and the lidar saw room that way."""
+    try:
+        data = json.loads(text)
+        if now - float(data['time']) > max_age or data.get('clear') is not True:
+            return None
+        return None if data.get('heading') is None else float(data['heading'])
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def suggestion_bonus(goal_bearing, heading, weight, cone=SUGGESTION_CONE_RAD):
+    """How much better (higher) a goal scores for lying the way the VLM suggests."""
+    return weight if abs(angle_difference(goal_bearing, heading)) < cone else 0.0
 
 
 def parse_reply(text, count):

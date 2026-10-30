@@ -8,7 +8,14 @@ from go2_auto_mapper.vlm_ranking import (
     Ranking,
     ViewMemory,
     VlmClient,
+    MOVE_CLEAR_M,
     build_describe_request,
+    clear_distance,
+    describe_move,
+    parse_suggestion,
+    suggestion_bonus,
+    suggestion_message,
+    usable_heading,
     build_request,
     heading_bin,
     match_score,
@@ -73,6 +80,62 @@ def test_describe_request_carries_the_picture():
     content = build_describe_request('qwen', b'a')['messages'][0]['content']
     assert content[0]['type'] == 'text'
     assert content[1]['image_url']['url'].startswith('data:image/jpeg;base64,')
+
+
+def test_suggestion_reads_a_known_move():
+    reply = 'Sure: {"description": "A hallway.", "move": "Turn Around", "reason": "Dead end."}'
+    assert parse_suggestion(reply) == ('A hallway.', 'turn_around', 'Dead end.')
+
+
+def test_suggestion_without_a_known_move_keeps_what_it_said():
+    assert parse_suggestion('just prose')[:2] == ('just prose', None)
+    assert parse_suggestion('{"description": "x", "move": "fly"}')[1] is None
+    assert parse_suggestion(None) == ('', None, '')
+
+
+def test_clear_distance_looks_only_that_way():
+    # Four readings: ahead, left, behind, right.
+    ranges = [1.0, 2.0, 3.0, 4.0]
+    step = math.pi / 2
+    assert clear_distance(ranges, 0.0, step, 0.0) == 1.0
+    assert clear_distance(ranges, 0.0, step, math.pi / 2) == 2.0
+    assert clear_distance(ranges, 0.0, step, -math.pi / 2) == 4.0
+    assert clear_distance(ranges, 0.0, step, math.pi) == 3.0   # wraps around
+
+
+def test_clear_distance_skips_bad_readings():
+    assert clear_distance([float('inf'), float('nan'), 0.0], 0.0, 0.01, 0.0) is None
+
+
+def test_describe_move_flags_a_blocked_way():
+    assert 'BLOCKED' in describe_move('forward', MOVE_CLEAR_M - 0.1, True)
+    assert 'clear' in describe_move('left', MOVE_CLEAR_M + 1.0, True)
+    assert 'not checked' in describe_move('left', None, False)
+    assert 'not checked' in describe_move('left', None, True)
+    assert describe_move('stop', None, True) == ''
+    assert describe_move(None, None, True) == ''
+
+
+def test_a_recent_clear_suggestion_gives_its_heading():
+    text = suggestion_message('left', 1.5, MOVE_CLEAR_M + 1.0, now=100.0)
+    assert usable_heading(text, 105.0) == 1.5
+
+
+def test_a_blocked_old_or_directionless_suggestion_is_ignored():
+    clear = MOVE_CLEAR_M + 1.0
+    blocked = suggestion_message('left', 1.5, MOVE_CLEAR_M - 0.1, 100.0)
+    assert usable_heading(blocked, 101.0) is None
+    assert usable_heading(suggestion_message('left', 1.5, None, 100.0), 101.0) is None
+    assert usable_heading(suggestion_message('left', 1.5, clear, 100.0), 200.0) is None
+    assert usable_heading(suggestion_message('stop', None, clear, 100.0), 101.0) is None
+    assert usable_heading(None, 101.0) is None
+    assert usable_heading('not json', 101.0) is None
+
+
+def test_bonus_goes_only_to_goals_that_way():
+    assert suggestion_bonus(0.2, 0.0, 300.0) == 300.0
+    assert suggestion_bonus(-0.2, 0.0, 300.0) == 300.0
+    assert suggestion_bonus(math.pi, 0.0, 300.0) == 0.0
 
 
 def test_parse_reply_reads_json_inside_prose():
