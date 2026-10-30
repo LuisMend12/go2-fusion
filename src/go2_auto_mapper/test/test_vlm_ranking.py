@@ -13,6 +13,9 @@ from go2_auto_mapper.vlm_ranking import (
     clear_distance,
     describe_move,
     parse_suggestion,
+    suggestion_bonus,
+    suggestion_message,
+    usable_heading,
     build_request,
     heading_bin,
     match_score,
@@ -111,6 +114,28 @@ def test_describe_move_flags_a_blocked_way():
     assert 'not checked' in describe_move('left', None, True)
     assert describe_move('stop', None, True) == ''
     assert describe_move(None, None, True) == ''
+
+
+def test_a_recent_clear_suggestion_gives_its_heading():
+    text = suggestion_message('left', 1.5, MOVE_CLEAR_M + 1.0, now=100.0)
+    assert usable_heading(text, 105.0) == 1.5
+
+
+def test_a_blocked_old_or_directionless_suggestion_is_ignored():
+    clear = MOVE_CLEAR_M + 1.0
+    blocked = suggestion_message('left', 1.5, MOVE_CLEAR_M - 0.1, 100.0)
+    assert usable_heading(blocked, 101.0) is None
+    assert usable_heading(suggestion_message('left', 1.5, None, 100.0), 101.0) is None
+    assert usable_heading(suggestion_message('left', 1.5, clear, 100.0), 200.0) is None
+    assert usable_heading(suggestion_message('stop', None, clear, 100.0), 101.0) is None
+    assert usable_heading(None, 101.0) is None
+    assert usable_heading('not json', 101.0) is None
+
+
+def test_bonus_goes_only_to_goals_that_way():
+    assert suggestion_bonus(0.2, 0.0, 300.0) == 300.0
+    assert suggestion_bonus(-0.2, 0.0, 300.0) == 300.0
+    assert suggestion_bonus(math.pi, 0.0, 300.0) == 0.0
 
 
 def test_parse_reply_reads_json_inside_prose():

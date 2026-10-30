@@ -56,7 +56,14 @@ from go2_auto_mapper.frontier_scoring import (
     world_key,
 )
 from go2_auto_mapper.social_space import line_crosses, parse_people, social_zones, zone_at
-from go2_auto_mapper.vlm_ranking import ViewMemory, VlmClient, match_score, vlm_bonus
+from go2_auto_mapper.vlm_ranking import (
+    ViewMemory,
+    VlmClient,
+    match_score,
+    suggestion_bonus,
+    usable_heading,
+    vlm_bonus,
+)
 
 
 class FrontierExplorer(Node):
@@ -106,6 +113,9 @@ class FrontierExplorer(Node):
         self.declare_parameter('vlm_weight', 400.0)
         self.declare_parameter('vlm_timeout', 8.0)
         self.declare_parameter('vlm_candidates', 4)
+        # In active mode, unknown cells a goal is worth extra for lying the way
+        # vlm_view last suggested. Needs the panel's VLM view on.
+        self.declare_parameter('vlm_suggest_weight', 300.0)
 
         # A full turn in place gives SLAM a 360 degree lidar view, so it can
         # place the robot on the map before (and after) each leg of exploring.
@@ -813,6 +823,8 @@ class FrontierExplorer(Node):
                 pool = self.rank_with_vlm(pool, robot_x, robot_y)
                 if pool is None:
                     return WAITING_FOR_VLM
+                if self.vlm_mode == 'active':
+                    pool = self.follow_suggestion(pool, robot_x, robot_y)
 
         best = min(pool, key=lambda c: c[0])
 
@@ -857,7 +869,41 @@ class FrontierExplorer(Node):
             Image, '/camera/image_raw', self.camera_callback,
             QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         )
+        self.vlm_suggest_weight = self.get_parameter('vlm_suggest_weight').value
+        self.vlm_suggestion = None
+        if self.vlm_mode == 'active':
+            self.suggestion_sub = self.create_subscription(
+                String, '/vlm/suggestion', self.suggestion_callback,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            )
         self.get_logger().info(f'VLM ranking in {self.vlm_mode} mode, asking {url}.')
+
+    def suggestion_callback(self, msg):
+        self.vlm_suggestion = msg.data
+
+    def follow_suggestion(self, pool, robot_x, robot_y):
+        """The pool with goals the way the VLM suggests scoring better, if it
+        has a recent suggestion the lidar agrees with. Only goals the map
+        already offered can win, and Nav2 still drives to them."""
+
+        heading = usable_heading(self.vlm_suggestion, time.time())
+        if heading is None:
+            return pool
+
+        ranked = [
+            (c[0] - suggestion_bonus(
+                math.atan2(c[2] - robot_y, c[1] - robot_x), heading, self.vlm_suggest_weight),
+             ) + c[1:]
+            for c in pool
+        ]
+        before = min(pool, key=lambda c: c[0])
+        after = min(ranked, key=lambda c: c[0])
+        if before[1:3] != after[1:3]:
+            self.get_logger().info(
+                f'VLM suggestion changes the goal from ({before[1]:.2f}, {before[2]:.2f}) '
+                f'to ({after[1]:.2f}, {after[2]:.2f}).'
+            )
+        return ranked
 
     def camera_callback(self, msg):
         """Remember the frame by the heading it was taken at. A few per

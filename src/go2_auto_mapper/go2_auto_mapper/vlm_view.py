@@ -4,11 +4,12 @@ and suggest a next move, which it checks against the lidar.
 
 A node of its own because the explorer drives the robot, and this should work
 with the robot standing still. It only reads the camera and publishes text and
-pictures, never a motion command: a suggestion is only shown. The RViz
-AutoMapper panel's VLM view button
-starts it and shows /vlm/view and /vlm/description.
+pictures, never a motion command. The RViz AutoMapper panel's VLM view button
+starts it and shows /vlm/view and /vlm/description. In vlm_mode active the
+explorer reads /vlm/suggestion and favors goals that way; Nav2 still drives.
 """
 
+import math
 import os
 import threading
 import time
@@ -19,6 +20,8 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image, LaserScan
 from std_msgs.msg import String
+import tf2_ros
+from tf2_ros import TransformException
 
 from go2_auto_mapper.explorer import encode_jpeg, stop_when_parent_dies
 from go2_auto_mapper.vlm_ranking import (
@@ -28,12 +31,15 @@ from go2_auto_mapper.vlm_ranking import (
     describe_move,
     parse_suggestion,
     post_chat,
+    suggestion_message,
 )
 
 DEFAULT_URL = 'http://localhost:8000/v1/chat/completions'
 DEFAULT_MODEL = 'Qwen/Qwen2.5-VL-7B-Instruct'
 # An older scan says nothing about what is there now.
 SCAN_MAX_AGE_SEC = 2.0
+MAP_FRAME = 'map'
+ROBOT_FRAME = 'base_link'
 
 
 class VlmView(Node):
@@ -60,6 +66,9 @@ class VlmView(Node):
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.view_pub = self.create_publisher(CompressedImage, '/vlm/view', latched)
         self.text_pub = self.create_publisher(String, '/vlm/description', latched)
+        self.suggestion_pub = self.create_publisher(String, '/vlm/suggestion', latched)
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.create_timer(self.get_parameter('period_sec').value, self.ask)
         self.get_logger().info(f'Describing the camera with {self.model} at {self.url}.')
 
@@ -70,17 +79,36 @@ class VlmView(Node):
         self.scan = msg
         self.scan_time = time.monotonic()
 
-    def suggestion_text(self, reply):
-        """The panel's text: the move, what the lidar thinks of it, the description."""
+    def map_yaw(self):
+        """The robot's heading on the map, or None if TF can't tell."""
+        try:
+            q = self.tf_buffer.lookup_transform(
+                MAP_FRAME, ROBOT_FRAME, rclpy.time.Time()).transform.rotation
+        except TransformException:
+            return None
+        return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
+    def suggestion_text(self, reply, frame_yaw):
+        """The panel's text: the move, what the lidar thinks of it, the
+        description. Also publishes the suggestion for the explorer."""
         description, move, reason = parse_suggestion(reply)
         if move is None:
             return description
         scan = self.scan
         have_scan = scan is not None and time.monotonic() - self.scan_time < SCAN_MAX_AGE_SEC
+        # The move was meant from where the picture was taken; the robot may
+        # have turned since the question went out.
         bearing = MOVES[move][0]
+        heading = None
+        yaw_now = self.map_yaw()
+        if bearing is not None and frame_yaw is not None:
+            heading = frame_yaw + bearing
         nearest = None
         if have_scan and bearing is not None:
-            nearest = clear_distance(scan.ranges, scan.angle_min, scan.angle_increment, bearing)
+            relative = bearing if heading is None or yaw_now is None else heading - yaw_now
+            nearest = clear_distance(scan.ranges, scan.angle_min, scan.angle_increment, relative)
+        self.suggestion_pub.publish(
+            String(data=suggestion_message(move, heading, nearest, time.time())))
         lines = [f'Suggested move: {MOVES[move][1]}. {reason}',
                  describe_move(move, nearest, have_scan), description]
         return '\n'.join(line for line in lines if line)
@@ -91,9 +119,10 @@ class VlmView(Node):
             return
         frame, self.frame = self.frame, None
         self.busy = True
-        threading.Thread(target=self.describe, args=(frame,), daemon=True).start()
+        threading.Thread(
+            target=self.describe, args=(frame, self.map_yaw()), daemon=True).start()
 
-    def describe(self, frame):
+    def describe(self, frame, frame_yaw):
         try:
             jpeg = encode_jpeg(frame)
             view = CompressedImage(format='jpeg', data=jpeg)
@@ -101,7 +130,7 @@ class VlmView(Node):
             self.view_pub.publish(view)
             payload = build_describe_request(self.model, jpeg)
             text = self.suggestion_text(
-                post_chat(self.url, payload, self.timeout, self.api_key))
+                post_chat(self.url, payload, self.timeout, self.api_key), frame_yaw)
         except Exception as e:   # a down server must not end the node
             text = f'VLM not answering: {e}'
             self.get_logger().warn(text, throttle_duration_sec=30.0)

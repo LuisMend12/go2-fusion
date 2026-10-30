@@ -55,6 +55,10 @@ MOVES = {
 # The lidar counts a direction as blocked closer than this to base_link: the
 # nose is 0.36 m ahead of it, plus room to stop.
 MOVE_CLEAR_M = 0.8
+# A suggestion older than this describes where the robot used to be.
+SUGGESTION_MAX_AGE_SEC = 15.0
+# A goal this close to the suggested heading counts as following it.
+SUGGESTION_CONE_RAD = math.radians(45.0)
 # How wide a slice of the scan a direction covers, each side.
 MOVE_CONE_RAD = math.radians(20.0)
 
@@ -175,6 +179,34 @@ def describe_move(move, nearest, have_scan):
     if nearest < MOVE_CLEAR_M:
         return f'Lidar: BLOCKED, something {nearest:.1f} m that way.'
     return f'Lidar: clear for {nearest:.1f} m.'
+
+
+def suggestion_message(move, heading, nearest, now):
+    """The /vlm/suggestion JSON. heading is the map-frame direction to walk (None
+    if unknown); clear only when the lidar saw room that way."""
+    return json.dumps({
+        'move': move,
+        'heading': heading,
+        'clear': nearest is not None and nearest >= MOVE_CLEAR_M,
+        'time': now,
+    })
+
+
+def usable_heading(text, now, max_age=SUGGESTION_MAX_AGE_SEC):
+    """The map-frame heading from a /vlm/suggestion message, or None unless it
+    is recent, has a direction, and the lidar saw room that way."""
+    try:
+        data = json.loads(text)
+        if now - float(data['time']) > max_age or data.get('clear') is not True:
+            return None
+        return None if data.get('heading') is None else float(data['heading'])
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def suggestion_bonus(goal_bearing, heading, weight, cone=SUGGESTION_CONE_RAD):
+    """How much better (higher) a goal scores for lying the way the VLM suggests."""
+    return weight if abs(angle_difference(goal_bearing, heading)) < cone else 0.0
 
 
 def parse_reply(text, count):

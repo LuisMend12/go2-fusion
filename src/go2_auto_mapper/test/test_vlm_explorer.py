@@ -5,7 +5,12 @@ import time
 from types import SimpleNamespace
 
 from go2_auto_mapper.explorer import FrontierExplorer
-from go2_auto_mapper.vlm_ranking import Ranking, ViewMemory
+from go2_auto_mapper.vlm_ranking import (
+    MOVE_CLEAR_M,
+    Ranking,
+    ViewMemory,
+    suggestion_message,
+)
 
 
 class FakeClient:
@@ -92,6 +97,33 @@ def test_a_failed_request_pauses_asking():
     assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) == POOL
     assert client.asked == []
     assert any('refused' in m for m in node.messages)
+
+
+def suggestion_stub(text):
+    node = explorer_stub('active', FakeClient())
+    node.vlm_suggest_weight = 300.0
+    node.vlm_suggestion = text
+    return node
+
+
+def test_a_clear_suggestion_changes_the_goal():
+    # The map prefers east by 50; the VLM suggests north, with room that way.
+    text = suggestion_message('left', 1.5708, MOVE_CLEAR_M + 1.0, time.time())
+    node = suggestion_stub(text)
+    ranked = FrontierExplorer.follow_suggestion(node, POOL, 0.0, 0.0)
+    assert min(ranked, key=lambda c: c[0])[1:3] == (0.0, 3.0)
+    assert any('suggestion changes' in m for m in node.messages)
+
+
+def test_a_blocked_suggestion_leaves_the_goal_alone():
+    text = suggestion_message('left', 1.5708, MOVE_CLEAR_M - 0.3, time.time())
+    node = suggestion_stub(text)
+    assert FrontierExplorer.follow_suggestion(node, POOL, 0.0, 0.0) == POOL
+
+
+def test_no_suggestion_leaves_the_goal_alone():
+    node = suggestion_stub(None)
+    assert FrontierExplorer.follow_suggestion(node, POOL, 0.0, 0.0) == POOL
 
 
 def test_no_views_means_map_score_alone():
