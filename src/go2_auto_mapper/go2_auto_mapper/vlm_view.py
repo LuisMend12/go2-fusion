@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
-"""Shows what the VLM sees: asks it to describe the camera every few seconds.
+"""Shows what the VLM sees: asks it to describe the camera every few seconds
+and suggest a next move, which it checks against the lidar.
 
 A node of its own because the explorer drives the robot, and this should work
 with the robot standing still. It only reads the camera and publishes text and
-pictures, never a motion command. The RViz AutoMapper panel's VLM view button
+pictures, never a motion command: a suggestion is only shown. The RViz
+AutoMapper panel's VLM view button
 starts it and shows /vlm/view and /vlm/description.
 """
 
 import os
 import threading
+import time
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import CompressedImage, Image
+from sensor_msgs.msg import CompressedImage, Image, LaserScan
 from std_msgs.msg import String
 
 from go2_auto_mapper.explorer import encode_jpeg, stop_when_parent_dies
-from go2_auto_mapper.vlm_ranking import build_describe_request, post_chat
+from go2_auto_mapper.vlm_ranking import (
+    MOVES,
+    build_describe_request,
+    clear_distance,
+    describe_move,
+    parse_suggestion,
+    post_chat,
+)
 
 DEFAULT_URL = 'http://localhost:8000/v1/chat/completions'
 DEFAULT_MODEL = 'Qwen/Qwen2.5-VL-7B-Instruct'
+# An older scan says nothing about what is there now.
+SCAN_MAX_AGE_SEC = 2.0
 
 
 class VlmView(Node):
@@ -39,8 +51,11 @@ class VlmView(Node):
 
         self.frame = None
         self.busy = False
+        self.scan = None
+        self.scan_time = 0.0
         camera_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(Image, '/camera/image_raw', self.camera_callback, camera_qos)
+        self.create_subscription(LaserScan, '/scan', self.scan_callback, camera_qos)
         # Latched, so the panel gets the last answer whenever it subscribes.
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.view_pub = self.create_publisher(CompressedImage, '/vlm/view', latched)
@@ -50,6 +65,25 @@ class VlmView(Node):
 
     def camera_callback(self, msg):
         self.frame = msg
+
+    def scan_callback(self, msg):
+        self.scan = msg
+        self.scan_time = time.monotonic()
+
+    def suggestion_text(self, reply):
+        """The panel's text: the move, what the lidar thinks of it, the description."""
+        description, move, reason = parse_suggestion(reply)
+        if move is None:
+            return description
+        scan = self.scan
+        have_scan = scan is not None and time.monotonic() - self.scan_time < SCAN_MAX_AGE_SEC
+        bearing = MOVES[move][0]
+        nearest = None
+        if have_scan and bearing is not None:
+            nearest = clear_distance(scan.ranges, scan.angle_min, scan.angle_increment, bearing)
+        lines = [f'Suggested move: {MOVES[move][1]}. {reason}',
+                 describe_move(move, nearest, have_scan), description]
+        return '\n'.join(line for line in lines if line)
 
     def ask(self):
         """One request at a time, off the spin thread: answers can take a while."""
@@ -66,7 +100,8 @@ class VlmView(Node):
             view.header = frame.header
             self.view_pub.publish(view)
             payload = build_describe_request(self.model, jpeg)
-            text = post_chat(self.url, payload, self.timeout, self.api_key)
+            text = self.suggestion_text(
+                post_chat(self.url, payload, self.timeout, self.api_key))
         except Exception as e:   # a down server must not end the node
             text = f'VLM not answering: {e}'
             self.get_logger().warn(text, throttle_duration_sec=30.0)

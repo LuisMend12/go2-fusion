@@ -8,7 +8,11 @@ from go2_auto_mapper.vlm_ranking import (
     Ranking,
     ViewMemory,
     VlmClient,
+    MOVE_CLEAR_M,
     build_describe_request,
+    clear_distance,
+    describe_move,
+    parse_suggestion,
     build_request,
     heading_bin,
     match_score,
@@ -73,6 +77,40 @@ def test_describe_request_carries_the_picture():
     content = build_describe_request('qwen', b'a')['messages'][0]['content']
     assert content[0]['type'] == 'text'
     assert content[1]['image_url']['url'].startswith('data:image/jpeg;base64,')
+
+
+def test_suggestion_reads_a_known_move():
+    reply = 'Sure: {"description": "A hallway.", "move": "Turn Around", "reason": "Dead end."}'
+    assert parse_suggestion(reply) == ('A hallway.', 'turn_around', 'Dead end.')
+
+
+def test_suggestion_without_a_known_move_keeps_what_it_said():
+    assert parse_suggestion('just prose')[:2] == ('just prose', None)
+    assert parse_suggestion('{"description": "x", "move": "fly"}')[1] is None
+    assert parse_suggestion(None) == ('', None, '')
+
+
+def test_clear_distance_looks_only_that_way():
+    # Four readings: ahead, left, behind, right.
+    ranges = [1.0, 2.0, 3.0, 4.0]
+    step = math.pi / 2
+    assert clear_distance(ranges, 0.0, step, 0.0) == 1.0
+    assert clear_distance(ranges, 0.0, step, math.pi / 2) == 2.0
+    assert clear_distance(ranges, 0.0, step, -math.pi / 2) == 4.0
+    assert clear_distance(ranges, 0.0, step, math.pi) == 3.0   # wraps around
+
+
+def test_clear_distance_skips_bad_readings():
+    assert clear_distance([float('inf'), float('nan'), 0.0], 0.0, 0.01, 0.0) is None
+
+
+def test_describe_move_flags_a_blocked_way():
+    assert 'BLOCKED' in describe_move('forward', MOVE_CLEAR_M - 0.1, True)
+    assert 'clear' in describe_move('left', MOVE_CLEAR_M + 1.0, True)
+    assert 'not checked' in describe_move('left', None, False)
+    assert 'not checked' in describe_move('left', None, True)
+    assert describe_move('stop', None, True) == ''
+    assert describe_move(None, None, True) == ''
 
 
 def test_parse_reply_reads_json_inside_prose():
