@@ -92,6 +92,7 @@ The model needs an NVIDIA GPU, so it runs on a cloud server, not the laptop. The
 - [Object detection](object-detection.md) - reads `/people` (people, their walking forecast and groups, `odom` frame).
 - [RViz panels](rviz-panels.md) - the AutoMapper panel starts and stops it.
 - [Simulator](simulator.md) - try it with no robot, or score it over 10 runs.
+- [RViz panels](rviz-panels.md) - the VLM view button runs `vlm_view`, which publishes `/vlm/view` (picture) and `/vlm/description` (text).
 - [Camera](camera.md) - with `vlm_mode` on, keeps one `/camera/image_raw` picture per direction for the VLM.
 
 ## How it breaks
