@@ -8,6 +8,7 @@ from go2_auto_mapper.vlm_ranking import (
     Ranking,
     ViewMemory,
     VlmClient,
+    build_describe_request,
     build_request,
     heading_bin,
     match_score,
@@ -66,6 +67,12 @@ def test_request_carries_one_image_per_candidate():
     assert len(images) == 2
     assert images[0]['image_url']['url'].startswith('data:image/jpeg;base64,')
     assert '2 images' in content[0]['text']
+
+
+def test_describe_request_carries_the_picture():
+    content = build_describe_request('qwen', b'a')['messages'][0]['content']
+    assert content[0]['type'] == 'text'
+    assert content[1]['image_url']['url'].startswith('data:image/jpeg;base64,')
 
 
 def test_parse_reply_reads_json_inside_prose():

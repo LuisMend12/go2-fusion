@@ -35,6 +35,12 @@ PROMPT = (
     '{{"scores": [one number per image, in order], "reason": "one short sentence"}}'
 )
 
+DESCRIBE_PROMPT = (
+    'You are the camera of a small robot dog. Describe what you see in 3 short '
+    'sentences: the room, objects and people, and whether there is open space '
+    'or a doorway to walk through.'
+)
+
 # One finished request: the goals asked about as (x, y), the score for
 # each (None if the request failed), the model's one-line reason or the
 # error, and time.monotonic() when it finished.
@@ -97,6 +103,20 @@ def build_request(model, jpegs):
         'messages': [{'role': 'user', 'content': content}],
         'temperature': 0.0,
         'max_tokens': 200,
+    }
+
+
+def build_describe_request(model, jpeg):
+    """Chat-completions payload asking the model to describe one image."""
+    url = 'data:image/jpeg;base64,' + base64.b64encode(jpeg).decode('ascii')
+    return {
+        'model': model,
+        'messages': [{'role': 'user', 'content': [
+            {'type': 'text', 'text': DESCRIBE_PROMPT},
+            {'type': 'image_url', 'image_url': {'url': url}},
+        ]}],
+        'temperature': 0.0,
+        'max_tokens': 160,
     }
 
 
