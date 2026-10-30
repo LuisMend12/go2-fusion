@@ -1000,7 +1000,14 @@ class FrontierExplorer(Node):
                 throttle_duration_sec=10.0
             )
             return False
-        self.vlm_client.submit([(c[1], c[2]) for c in top], frames)
+        # The score is -(revealed - cells_per_meter * walk), so the cells can be
+        # had back without casting the rays again.
+        facts = [
+            f'The map says it is {c[7]:.1f} m away and could show about '
+            f'{max(0, round(self.info_gain_cells_per_meter * c[7] - c[0]))} unknown cells.'
+            for c in top
+        ]
+        self.vlm_client.submit([(c[1], c[2]) for c in top], frames, facts)
         return True
 
     def revealed_from(self, x, y):

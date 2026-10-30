@@ -11,6 +11,7 @@ from go2_auto_mapper.vlm_ranking import (
     MOVE_CLEAR_M,
     build_describe_request,
     clear_distance,
+    lidar_sentence,
     describe_move,
     parse_suggestion,
     suggestion_bonus,
@@ -74,6 +75,39 @@ def test_request_carries_one_image_per_candidate():
     assert len(images) == 2
     assert images[0]['image_url']['url'].startswith('data:image/jpeg;base64,')
     assert '2 images' in content[0]['text']
+
+
+def test_request_can_carry_what_the_map_says():
+    content = build_request('qwen', [b'a', b'b'], ['near', 'far'])['messages'][0]['content']
+    texts = [part['text'] for part in content if part['type'] == 'text']
+    assert texts[1] == 'Image 1: near'
+    assert texts[2] == 'Image 2: far'
+
+
+def test_facts_stay_with_their_pictures_when_a_view_is_missing():
+    sent = {}
+
+    def fake_post(url, payload, timeout, api_key):
+        sent['content'] = payload['messages'][0]['content']
+        return '{"scores": [0.8, 0.3]}'
+
+    client = VlmClient('http://x', 'm', 1.0, encode=lambda f: f, post=fake_post)
+    client.submit([(0, 0), (1, 0), (2, 0)], [b'a', None, b'c'], ['A', 'B', 'C'])
+    wait_for_result(client)
+    texts = [part['text'] for part in sent['content'] if part['type'] == 'text']
+    assert texts[1:] == ['Image 1: A', 'Image 2: C']
+
+
+def test_lidar_sentence_gives_each_direction():
+    sentence = lidar_sentence([1.0, 2.0, 3.0, float('inf')], 0.0, math.pi / 2)
+    assert sentence == ('Lidar distances now: forward 1.0 m, left 2.0 m, '
+                        'right no reading, behind 3.0 m.')
+
+
+def test_describe_request_tells_the_model_what_the_lidar_sees():
+    payload = build_describe_request('qwen', b'a', 'Lidar distances now: forward 1.0 m.')
+    assert 'forward 1.0 m' in payload['messages'][0]['content'][0]['text']
+    assert payload['response_format'] == {'type': 'json_object'}
 
 
 def test_describe_request_carries_the_picture():

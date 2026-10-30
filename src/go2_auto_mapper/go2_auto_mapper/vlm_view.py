@@ -29,6 +29,7 @@ from go2_auto_mapper.vlm_ranking import (
     build_describe_request,
     clear_distance,
     describe_move,
+    lidar_sentence,
     parse_suggestion,
     post_chat,
     suggestion_message,
@@ -128,7 +129,12 @@ class VlmView(Node):
             view = CompressedImage(format='jpeg', data=jpeg)
             view.header = frame.header
             self.view_pub.publish(view)
-            payload = build_describe_request(self.model, jpeg)
+            scan = self.scan
+            if scan is not None and time.monotonic() - self.scan_time < SCAN_MAX_AGE_SEC:
+                lidar = lidar_sentence(scan.ranges, scan.angle_min, scan.angle_increment)
+                payload = build_describe_request(self.model, jpeg, lidar)
+            else:
+                payload = build_describe_request(self.model, jpeg)
             text = self.suggestion_text(
                 post_chat(self.url, payload, self.timeout, self.api_key), frame_yaw)
         except Exception as e:   # a down server must not end the node
