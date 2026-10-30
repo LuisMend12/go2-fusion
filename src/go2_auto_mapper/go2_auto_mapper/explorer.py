@@ -96,9 +96,13 @@ class FrontierExplorer(Node):
         # cells from a sure no to a sure yes. vlm_url is an OpenAI-compatible
         # chat endpoint (vLLM, Ollama); VLM_API_KEY in the environment is
         # sent if the server needs one.
-        self.declare_parameter('vlm_mode', 'off')
-        self.declare_parameter('vlm_url', 'http://localhost:8000/v1/chat/completions')
-        self.declare_parameter('vlm_model', 'Qwen/Qwen2.5-VL-7B-Instruct')
+        # VLM_MODE, VLM_URL and VLM_MODEL set the defaults: the RViz panel's Start
+        # button runs the explorer with no parameters.
+        self.declare_parameter('vlm_mode', os.environ.get('VLM_MODE', 'off'))
+        self.declare_parameter(
+            'vlm_url', os.environ.get('VLM_URL', 'http://localhost:8000/v1/chat/completions'))
+        self.declare_parameter(
+            'vlm_model', os.environ.get('VLM_MODEL', 'Qwen/Qwen2.5-VL-7B-Instruct'))
         self.declare_parameter('vlm_weight', 400.0)
         self.declare_parameter('vlm_timeout', 8.0)
         self.declare_parameter('vlm_candidates', 4)
