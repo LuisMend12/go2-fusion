@@ -1,0 +1,3 @@
+{"goal": 1, "sent_at": 1793460836.4894986, "robot": [0.0, 0.0], "target": [-0.102, 0.488], "known_cells_before": 1625, "frontier_size": 8, "map_score": -1752.1, "result": "reached", "events": [], "seconds": 10.7, "revealed_cells": 2931}
+{"goal": 2, "sent_at": 1793460858.897297, "robot": [-0.16, 0.297], "target": [-0.402, 3.538], "known_cells_before": 4556, "frontier_size": 5, "map_score": -1815.0, "result": "reached", "events": [], "seconds": 8.8, "revealed_cells": 9511}
+{"goal": 3, "sent_at": 1793460881.0018535, "robot": [-0.447, 3.42], "target": [3.418, 4.788], "known_cells_before": 14067, "frontier_size": 6, "map_score": -1145.1, "result": "reached", "events": [], "seconds": 8.8, "revealed_cells": 5093}

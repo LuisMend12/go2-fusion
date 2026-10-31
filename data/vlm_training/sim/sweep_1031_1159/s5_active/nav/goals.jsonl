@@ -1,0 +1,1 @@
+{"goal": 1, "sent_at": 1793462927.7961316, "robot": [0.0, 0.0], "target": [0.496, 0.09], "known_cells_before": 1623, "frontier_size": 24, "map_score": -1754.6, "result": "reached", "events": [], "image": "goal_1793462927_0001.jpg", "seconds": 1.4, "revealed_cells": 0}
