@@ -56,6 +56,7 @@ from go2_auto_mapper.frontier_scoring import (
     world_key,
 )
 from go2_auto_mapper.social_space import line_crosses, parse_people, social_zones, zone_at
+from go2_auto_mapper.nav_log import NavLog, known_cell_count
 from go2_auto_mapper.vlm_ranking import (
     ViewMemory,
     VlmClient,
@@ -116,6 +117,9 @@ class FrontierExplorer(Node):
         # In active mode, unknown cells a goal is worth extra for lying the way
         # vlm_view last suggested. Needs the panel's VLM view on.
         self.declare_parameter('vlm_suggest_weight', 300.0)
+        # Folder for the navigation log (nav_log.py); empty is off. NAV_LOG_DIR
+        # sets the default, since the RViz panel's Start passes no parameters.
+        self.declare_parameter('nav_log_dir', os.environ.get('NAV_LOG_DIR', ''))
 
         # A full turn in place gives SLAM a 360 degree lidar view, so it can
         # place the robot on the map before (and after) each leg of exploring.
@@ -387,6 +391,11 @@ class FrontierExplorer(Node):
         )
 
         self.setup_vlm()
+        nav_log_dir = self.get_parameter('nav_log_dir').value
+        self.nav_log = None
+        if nav_log_dir:
+            self.nav_log = NavLog(nav_log_dir, warn=self.get_logger().warn)
+            self.get_logger().info(f'Keeping a navigation log in {nav_log_dir}.')
 
         self.get_logger().info(
             'Go2 Frontier Explorer started.'
@@ -1221,6 +1230,7 @@ class FrontierExplorer(Node):
                     else 'Reached exploration goal.'
                 )
                 self.consecutive_failures = 0
+                self.log_goal_ended('reached')
 
                 if self.scan_after_goal or self.goal_is_escape:
                     self.scan_pending = True
@@ -1236,12 +1246,14 @@ class FrontierExplorer(Node):
 
                 # Interrupted for a requested scan: not the goal's fault.
                 self.get_logger().info('Goal paused for the requested scan.')
+                self.log_goal_ended('paused')
 
             else:
 
                 self.get_logger().warn(
                     f'Navigation ended with status {status}'
                 )
+                self.log_goal_ended('failed')
 
                 self.record_goal_failure()
 
@@ -1557,6 +1569,7 @@ class FrontierExplorer(Node):
         self.get_logger().info(
             f'Recovery translation: x={move[0]:.2f}, y={move[1]:.2f} m.'
         )
+        self.log_event(f'recovery move x={move[0]:.2f} y={move[1]:.2f}')
 
     def _recovery_progress(self, pose, x, y, yaw, move, distance):
         """Distance along the commanded translation, and the cross-track error."""
@@ -2026,6 +2039,7 @@ class FrontierExplorer(Node):
             return
 
         self.get_logger().warn(f'Stuck ({reason}): heading for open space.')
+        self.log_event(f'stuck: {reason}')
         self.escape_pending = True
 
     def start_escape(self):
@@ -2260,6 +2274,37 @@ class FrontierExplorer(Node):
             # Sized in keys, the unit verify_frontier_shrank measures in.
             keys = self.frontier_keys(frontier)
             self.goal_frontier = (keys, len(keys))
+            self.log_goal_sent(robot_x, robot_y, x, y, size, score)
+
+    def log_goal_sent(self, robot_x, robot_y, x, y, size, score):
+        """Note the new goal in the navigation log, with the camera view toward
+        it if the VLM has been keeping views. A logging failure must not stop
+        exploring, with a goal already on its way."""
+
+        if self.nav_log is None:
+            return
+        try:
+            jpeg = None
+            if self.vlm_client is not None:
+                frame = self.views.view_toward(
+                    robot_x, robot_y, math.atan2(y - robot_y, x - robot_x),
+                    time.monotonic(), VIEW_MAX_OFFSET_M, VIEW_MAX_ANGLE_RAD, VIEW_MAX_AGE_SEC,
+                )
+                if frame is not None:
+                    jpeg = encode_jpeg(frame)
+            self.nav_log.goal_sent(
+                (robot_x, robot_y), (x, y), known_cell_count(self.map.data), size, score, jpeg
+            )
+        except Exception as e:
+            self.get_logger().warn(f'Navigation log error: {e}')
+
+    def log_event(self, what):
+        if self.nav_log is not None:
+            self.nav_log.event(what)
+
+    def log_goal_ended(self, result):
+        if self.nav_log is not None and not self.goal_is_escape:
+            self.nav_log.goal_ended(result)
 
     def stop(self):
         # Nothing new may start moving the robot from here on.

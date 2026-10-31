@@ -68,7 +68,12 @@ Part of: [Maps and navigation](maps-nav.md)
 | `vlm_model` | `Qwen/Qwen2.5-VL-7B-Instruct` | Model name the server knows it by |
 | `vlm_weight` | `400.0` | How much the VLM counts: from a sure "no" to a sure "yes" is worth this many unknown cells (400 = 1 square meter) |
 | `vlm_timeout` | `8.0` | Seconds to wait for the VLM before going with the map score alone |
+| `nav_log_dir` | empty | Folder for the navigation log; empty is off |
 | `vlm_candidates` | `4` | How many of the best spots to show the VLM |
+
+### The navigation log
+
+Set `NAV_LOG_DIR` in the container's environment (or the `nav_log_dir` parameter) and the explorer keeps a diary in that folder: `goals.jsonl` has one line per goal, with where Oak was, the goal, how it ended (`reached`, `failed` or `paused`), how many new map squares it led to (`revealed_cells`), and any recovery moves or stuck moments. With the VLM on, it also saves the camera picture toward the goal. Off by default. It is there for reading a run afterwards, and as training data if the VLM is ever fine-tuned: a picture labeled by what walking that way really showed. The last goal of a run is not written, because it is only finished when the next goal is sent.
 
 ### Using the VLM
 
