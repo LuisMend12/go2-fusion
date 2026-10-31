@@ -41,7 +41,7 @@ Part of: [Lab setup](lab-setup.md)
 - it publishes `/point_cloud2` in the `odom` frame, like the real driver, from a simulated lidar under Oak's chin (where `go2.urdf` puts it); `pointcloud_to_laserscan` turns it into `/scan` as usual;
 - it publishes a standing `/joint_states`, so RViz draws the legs.
 
-So SLAM, Nav2, twist_mux and the auto mapper run unchanged. `/imu`, `/go2_states` and the camera are not simulated. The cloud reaches `lidar_to_pointcloud` through the same `/robot0/point_cloud2` -> `/point_cloud2` rename as on the robot (the open topic question in the [Test log](test-log.md) applies here too).
+So SLAM, Nav2, twist_mux and the auto mapper run unchanged. `/imu` and `/go2_states` are not simulated. The front camera is optional and off unless you ask for it (see the dials): rendering it costs CPU on a laptop with no GPU. The cloud reaches `lidar_to_pointcloud` through the same `/robot0/point_cloud2` -> `/point_cloud2` rename as on the robot (the open topic question in the [Test log](test-log.md) applies here too).
 
 **Kept away from the real robot.** The simulator uses ROS domain 42 and talks only inside your computer (`ROS_LOCALHOST_ONLY=1`), so its drive commands can never reach a real Oak on the network. To look at its topics from another terminal, first run `export ROS_DOMAIN_ID=42 ROS_LOCALHOST_ONLY=1`.
 
@@ -104,6 +104,9 @@ Launch arguments (for `sim.launch.py`, or after `--` for trials). The odometry a
 | `odom_drift_yaw` | 0 | Steady heading drift, radians per meter walked (a slow curve SLAM has to fix) |
 | `cmd_latency` | 0.1 | Seconds between a drive command and Oak moving |
 | `seed` | 0 | Odometry noise seed (0 = different every run) |
+| `camera_rate` | 0, or 5 with `vlm_mode` on | Front camera pictures per second on `/camera/image_raw`, 640 x 360. 0 means no camera. Its 90 degree view is a guess. TODO(owner): measure the real camera's |
+| `vlm_mode` | `off` | The auto mapper's [VLM](auto-mapper.md#using-the-vlm) goal ranking: `off`, `shadow` or `active`. Only used with `explore:=true` |
+| `vlm_url`, `vlm_model` | empty | Where the VLM server is and which model to ask, passed to the auto mapper |
 
 In `sim.yaml` only: `odom_scale_xy` and `odom_scale_yaw` (Oak says it went or turned a few % more than it did), `cmd_timeout` (Oak stops after 0.5 s without commands), speed and acceleration limits, the lidar mount position, and the self-filter box that drops lidar points on Oak's own head and legs (kept inside the 0.36 m nose, so something touching the nose is still seen). TODO(owner): measure Oak's real odometry error, command delay and stop timeout, and set these defaults from them.
 
@@ -125,6 +128,19 @@ With this branch alone (master's Nav2 settings and auto mapper), a 2-run check m
 - **The auto mapper latches stopped next to close obstacles.** Its unstuck move says "no safe direction: rear and both sides lack clearance" and waits, even with open floor behind. The lidar there reads true distances (checked beam by beam against the true map), so this is the auto mapper's own check, not the simulator. Three bugs caused it, all fixed (see [Auto mapper](auto-mapper.md)); still to confirm on Oak.
 - **Nav2 drives Oak to within 0.05-0.25 m of door jambs, the pillar and furniture**, then reports "No valid trajectories" or "Failed to make progress". TODO(Luis): does Oak get that close on the real floor?
 - **`go2.urdf`'s fixed `odom` -> `base_link` joint** puts `base_link` on the floor until odometry starts; a lidar cloud sent before then shows the floor as walls. The stand-in driver now waits for odometry first. The real driver might hit the same thing at startup (see [TF and robot model](tf.md)).
+
+## VLM test (2026-10-31)
+
+One 8-minute run with the VLM on and one with it off, in the placeholder world with `seed:=1`, using Qwen2.5-VL 7B:
+
+| | VLM `active` | VLM off |
+|---|---|---|
+| Known map squares at 2 minutes | 27,894 | 27,948 |
+| Known map squares at 8 minutes | 28,322 | 28,148 |
+| Goals sent / reached | 7 / 5 | 6 / 5 |
+| Finished exploring | No | No |
+
+The VLM made no measurable difference, but one run each is too few to say more, and this world's plain gray walls give a camera model little to go on. A world that looks like the real lab would be a fairer test. Both runs stopped mapping after about 2 minutes on `Still stopped: no safe direction on the latest scan`. TODO(Luis): find out why, starting with the lower `obstacle_stop_distance` and `wall_clearance`.
 
 ## How it breaks
 
