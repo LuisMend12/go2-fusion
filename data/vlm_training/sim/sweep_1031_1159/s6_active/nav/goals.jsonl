@@ -1,1 +1,0 @@
-{"goal": 1, "sent_at": 1793462930.0675619, "robot": [0.0, 0.0], "target": [0.25, 0.442], "known_cells_before": 1629, "frontier_size": 10, "map_score": -1681.2, "result": "reached", "events": [], "seconds": 4.0, "revealed_cells": 2940}
