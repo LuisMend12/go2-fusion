@@ -2,7 +2,7 @@
 title: Auto mapper
 parent: maps-nav
 code: [src/go2_auto_mapper/**]
-verified: 5f5ddc20d877
+verified: 0db04c86ad46
 ---
 
 # Auto mapper
@@ -29,6 +29,12 @@ Part of: [Maps and navigation](maps-nav.md)
 9. **Finish.** With no frontiers left it logs "Exploration complete" and waits, in case a door opens.
 
 **People.** When [object detection](object-detection.md) runs, it publishes `/people`: where each person is, a straight-line guess of where they will walk, and who stands together in a group (ideas from [SocialNav](https://github.com/ram95d/SocialNav)). The explorer keeps goals out of a 1 m circle around each person, out of a 0.6 m band along their next 2.4 s of walking, and out of the inside of a group (a robot should go around two people talking, not between them). A goal whose straight path crosses one of these only loses ties. This is a ranking step like the others, so a room full of people never stops exploring. Without `/people`, nothing changes.
+
+At the same state transitions it publishes structured, reliable
+`/auto_mapper/events` messages for the [Scoreboard](scoreboard.md): exploration
+start/stop/completion, goal sent/accepted/outcome, recovery start/finish and
+stale sensing. These messages observe existing choices; they do not choose a
+frontier, change a threshold or send motion.
 
 **Buttons.** The RViz AutoMapper panel has **Start/Stop**, **Scan** (pause the goal, forget recent failures, turn 360 degrees; the same as calling `/frontier_explorer/scan`) and **Reset maps** (restart SLAM with an empty 2D map and clear the 3D point cloud).
 
@@ -104,6 +110,7 @@ The model needs an NVIDIA GPU, so it runs on a GPU server, not the laptop. **Cam
 - [Simulator](simulator.md) - try it with no robot, or score it over 10 runs.
 - [RViz panels](rviz-panels.md) - the VLM view button runs `vlm_view`, which publishes `/vlm/view` (picture) and `/vlm/description` (text).
 - [Camera](camera.md) - with `vlm_mode` on, keeps one `/camera/image_raw` picture per direction for the VLM.
+- [Scoreboard](scoreboard.md) - counts goals and recoveries from structured events.
 
 ## How it breaks
 
