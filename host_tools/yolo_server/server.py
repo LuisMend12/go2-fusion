@@ -1,32 +1,80 @@
 """HTTP server around YOLO on a GPU, so the robot laptop needs no GPU.
 
-POST /detect  {"image": base64 JPEG, "conf": minimum confidence (default 0.25),
+POST /detect  {"image": base64 JPEG, "conf": minimum confidence 0 to 1 (default 0.25),
                "classes": [names] (YOLOE weights only; [] keeps the model's own)}
            -> {"detections": [{"label", "confidence", "box": [x1, y1, x2, y2] pixels}],
                "seconds": s}
 GET  /health  -> {"model": weights file, "device": "cuda:N", "gpu_gb": memory in use}
 
 The object_detection node (inference_url, or YOLO_URL) sends one picture per
-request and does everything else (positions, memory, people) itself.
+request and does everything else (positions, memory, people) itself. It has no
+password: keep it on localhost and reach it over an SSH tunnel.
 """
 
 import base64
+import io
 import json
+import math
 import os
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
 import numpy as np
 import torch
+from PIL import Image
 from ultralytics import YOLO
 
 MODEL_PATH = os.environ.get('YOLO_MODEL', 'yolov8n.pt')
 PORT = int(os.environ.get('YOLO_PORT', '8200'))
 DEVICE = os.environ.get('YOLO_DEVICE', 'cuda:0' if torch.cuda.is_available() else 'cpu')
-# Bigger requests are refused: a 640-wide JPEG is well under 1 MB.
+# Limits, so one bad or hostile request can't use up memory or threads. A
+# 640-wide JPEG is about 50 KB; the robot camera is 1280 x 720.
 MAX_BODY_BYTES = 8 * 1024 * 1024
+MAX_PIXELS = 4096 * 2160
+MAX_CLASSES = 50
+MAX_CLASS_CHARS = 64
+# Requests decoded or waiting for the GPU at once; more are refused (503).
+MAX_IN_FLIGHT = 4
+# Seconds a client may take to send its request.
+SOCKET_TIMEOUT_SEC = 10.0
+
+
+def decode_image(text):
+    """Decode a base64 JPEG or PNG, checking its size before decompressing it."""
+    if not isinstance(text, str):
+        raise ValueError('image must be a base64 string')
+    data = base64.b64decode(text, validate=True)
+    if not data:
+        raise ValueError('image is empty')
+    try:
+        width, height = Image.open(io.BytesIO(data)).size   # reads the header only
+    except Exception as e:
+        raise ValueError(f'image is not a JPEG or PNG: {e}') from e
+    if width * height > MAX_PIXELS:
+        raise ValueError(f'image is {width} x {height}; at most {MAX_PIXELS} pixels')
+    frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError('image could not be decoded')
+    return frame
+
+
+def parse_request(request):
+    """Check a /detect body; return (frame, conf, classes) or raise ValueError."""
+    if not isinstance(request, dict):
+        raise ValueError('body must be a JSON object')
+    conf = float(request.get('conf', 0.25))
+    if not (math.isfinite(conf) and 0.0 <= conf <= 1.0):
+        raise ValueError('conf must be between 0 and 1')
+    classes = request.get('classes', [])
+    if not isinstance(classes, list) or len(classes) > MAX_CLASSES:
+        raise ValueError(f'classes must be a list of at most {MAX_CLASSES} names')
+    classes = [c.strip() if isinstance(c, str) else '' for c in classes]
+    if not all(0 < len(c) <= MAX_CLASS_CHARS for c in classes):
+        raise ValueError(f'each class must be a name of 1 to {MAX_CLASS_CHARS} characters')
+    return decode_image(request.get('image')), conf, classes
 
 
 class Service:
@@ -39,20 +87,23 @@ class Service:
         # Warm up, so the first real request is not slow.
         self.model(np.zeros((360, 640, 3), np.uint8), device=DEVICE, verbose=False)
 
+    def use_classes(self, classes):
+        """Switch the vocabulary; call with the lock held."""
+        if classes == self.classes:
+            return
+        if classes and not hasattr(self.model, 'set_classes'):
+            raise ValueError(f'{MODEL_PATH} has fixed classes; classes needs YOLOE weights')
+        if classes:
+            self.model.set_classes(classes)
+        else:
+            # set_classes replaced the model's own names; only a reload brings them back.
+            self.model = YOLO(MODEL_PATH)
+        self.classes = classes
+
     def detect(self, request):
-        data = np.frombuffer(base64.b64decode(request['image'], validate=True), np.uint8)
-        frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
-        if frame is None:
-            raise ValueError('image is not a JPEG or PNG')
-        conf = float(request.get('conf', 0.25))
-        classes = [str(c) for c in request.get('classes', [])]
+        frame, conf, classes = parse_request(request)
         with self.lock:
-            if classes != self.classes:
-                if classes and not hasattr(self.model, 'set_classes'):
-                    raise ValueError(f'{MODEL_PATH} has fixed classes; classes needs YOLOE weights')
-                if classes:
-                    self.model.set_classes(classes)
-                self.classes = classes
+            self.use_classes(classes)
             result = self.model(frame, conf=conf, device=DEVICE, verbose=False)[0]
         names = result.names
         return {'detections': [
@@ -63,8 +114,11 @@ class Service:
 
 
 def make_handler(service):
+    in_flight = threading.BoundedSemaphore(MAX_IN_FLIGHT)
 
     class Handler(BaseHTTPRequestHandler):
+
+        timeout = SOCKET_TIMEOUT_SEC
 
         def reply(self, code, data):
             payload = json.dumps(data).encode()
@@ -85,6 +139,9 @@ def make_handler(service):
             if self.path != '/detect':
                 self.reply(404, {'error': 'unknown path'})
                 return
+            if not in_flight.acquire(blocking=False):
+                self.reply(503, {'error': f'busy: {MAX_IN_FLIGHT} requests already running'})
+                return
             started = time.monotonic()
             try:
                 length = int(self.headers.get('Content-Length', 0))
@@ -98,6 +155,11 @@ def make_handler(service):
             except torch.cuda.OutOfMemoryError:
                 torch.cuda.empty_cache()
                 self.reply(503, {'error': 'GPU out of memory'})
+            except Exception as e:   # one bad request must not take the server down
+                traceback.print_exc()
+                self.reply(500, {'error': f'{type(e).__name__}: {e}'})
+            finally:
+                in_flight.release()
 
         def log_message(self, *args):
             pass

@@ -32,7 +32,7 @@ from object_detection.remote_yolo import (
     parse_detections,
     post_json,
     RETRY_SEC,
-    send_scale,
+    send_size,
     ServerGate,
 )
 
@@ -103,9 +103,15 @@ class ObjectDetector(Node):
         self.inference_url = self.declare_parameter(
             "inference_url", os.environ.get("YOLO_URL", "")
         ).value
-        self.inference_timeout = self.declare_parameter("inference_timeout_sec", 1.0).value
+        timeout = float(self.declare_parameter("inference_timeout_sec", 1.0).value)
+        if not (math.isfinite(timeout) and timeout > 0):
+            self.get_logger().warn(f"inference_timeout_sec {timeout} is not > 0; using 1.0")
+            timeout = 1.0
+        self.inference_timeout = timeout
         self.server_gate = ServerGate()
         self.model = None
+        # When loading or running the CPU model failed, when to try again.
+        self.local_retry_after = 0.0
         if self.inference_url:
             self.get_logger().info(
                 f"Asking the YOLO server at {self.inference_url} (max {max_rate_hz} Hz, "
@@ -251,13 +257,19 @@ class ObjectDetector(Node):
             )
 
     def detect(self, frame):
-        """Boxes in frame (full-size pixels): from the server if it answers, else here."""
-        now = time.monotonic()
-        if self.inference_url and self.server_gate.use_server(now):
+        """
+        Return the boxes in frame (full-size pixels) and a way to draw them.
+
+        Asks the server when one is set and answering, else runs YOLO here.
+        The second value draws ultralytics' own picture for the local model,
+        and is None for the server's boxes. Returns ([], None) when neither
+        works, so a bad frame never ends the node.
+        """
+        if self.inference_url and self.server_gate.use_server(time.monotonic()):
             try:
                 detections = self.detect_on_server(frame)
             except Exception as e:   # a down server or tunnel must not end the node
-                if self.server_gate.failed(now):
+                if self.server_gate.failed(time.monotonic()):
                     self.get_logger().warn(
                         f"YOLO server not answering ({e}); using the CPU model, "
                         f"trying the server again every {RETRY_SEC:.0f} s"
@@ -265,34 +277,46 @@ class ObjectDetector(Node):
             else:
                 if self.server_gate.succeeded():
                     self.get_logger().info("YOLO server answering again")
-                return detections
-        if self.model is None:
-            self.load_local_model()
-        # verbose=False: ultralytics otherwise prints a line per frame.
-        # conf: boxes below min_confidence are dropped here, so they are
-        # neither remembered nor drawn.
-        results = self.model(frame, conf=self.min_confidence, verbose=False)
-        return [
-            Detection(self.model.names[int(box.cls[0])], float(box.conf[0]),
-                      *(float(v) for v in box.xyxy[0]))
-            for box in results[0].boxes
-        ]
+                return detections, None
+        return self.detect_locally(frame)
+
+    def detect_locally(self, frame):
+        if time.monotonic() < self.local_retry_after:
+            return [], None
+        try:
+            if self.model is None:
+                self.load_local_model()
+            # verbose=False: ultralytics otherwise prints a line per frame.
+            # conf: boxes below min_confidence are dropped here, so they are
+            # neither remembered nor drawn.
+            result = self.model(frame, conf=self.min_confidence, verbose=False)[0]
+            detections = [
+                Detection(self.model.names[int(box.cls[0])], float(box.conf[0]),
+                          *(float(v) for v in box.xyxy[0]))
+                for box in result.boxes
+            ]
+        except Exception as e:   # e.g. weights missing or not downloadable
+            self.local_retry_after = time.monotonic() + RETRY_SEC
+            self.get_logger().error(
+                f"CPU YOLO failed ({e}); no detections for {RETRY_SEC:.0f} s"
+            )
+            return [], None
+        return detections, result.plot
 
     def detect_on_server(self, frame):
-        scale = send_scale(frame.shape[1])
-        small = frame if scale == 1.0 else cv2.resize(
-            frame, (round(frame.shape[1] * scale), round(frame.shape[0] * scale))
-        )
+        full_size = (frame.shape[1], frame.shape[0])
+        sent_size = send_size(*full_size)
+        small = frame if sent_size == full_size else cv2.resize(frame, sent_size)
         ok, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         if not ok:
             raise ValueError("JPEG encoding failed")
         body = build_request(jpeg.tobytes(), self.min_confidence, self.classes)
         return parse_detections(
-            post_json(self.inference_url, body, self.inference_timeout), scale
+            post_json(self.inference_url, body, self.inference_timeout), sent_size, full_size
         )
 
     def draw(self, frame, detections):
-        """Return a copy of frame with each box and its label drawn on."""
+        """Return a copy of frame with each server box and its label drawn on."""
         annotated = frame.copy()
         for d in detections:
             corner = (int(d.x1), int(d.y1))
@@ -314,12 +338,12 @@ class ObjectDetector(Node):
         self.last_inference_sec = now_sec
 
         frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        detections = self.detect(frame)
+        detections, plot = self.detect(frame)
 
         # Drawing and sending a full-size image is costly, so skip it when
         # nobody (e.g. an RViz Image display) is watching.
         if self.annotated_pub.get_subscription_count() > 0:
-            annotated = self.draw(frame, detections)
+            annotated = plot() if plot is not None else self.draw(frame, detections)
             annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
             self.annotated_pub.publish(annotated_msg)
 

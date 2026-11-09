@@ -9,10 +9,11 @@ No ROS here, so it tests on any machine.
 """
 
 import base64
+from collections import namedtuple
 import json
 import math
+import time
 import urllib.request
-from collections import namedtuple
 
 # Width the picture is shrunk to before sending: YOLO's own input size, so
 # nothing it would have seen is lost, and each request stays small.
@@ -20,13 +21,20 @@ SEND_WIDTH = 640
 JPEG_QUALITY = 80
 # After the server fails, how long to use the local model before asking it again.
 RETRY_SEC = 30.0
+# A reply bigger than this is not a list of boxes for one picture.
+MAX_REPLY_BYTES = 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
+# Labels longer than this are not class names.
+MAX_LABEL_CHARS = 100
 
 Detection = namedtuple('Detection', 'label confidence x1 y1 x2 y2')
 
 
-def send_scale(width, send_width=SEND_WIDTH):
-    """Return the factor a picture this wide is shrunk by (1.0: sent as is)."""
-    return min(1.0, send_width / width) if width > 0 else 1.0
+def send_size(width, height, send_width=SEND_WIDTH):
+    """Return the (width, height) a picture is shrunk to before sending."""
+    if width <= send_width:
+        return width, height
+    return send_width, max(1, round(height * send_width / width))
 
 
 def build_request(jpeg, min_confidence, classes=()):
@@ -38,35 +46,61 @@ def build_request(jpeg, min_confidence, classes=()):
     }
 
 
-def parse_detections(reply, scale=1.0):
+def parse_detections(reply, sent_size, full_size):
     """
     Turn the server's reply into Detections in full-picture pixels.
 
-    scale is the factor the picture was shrunk by before sending. Raises
-    ValueError on a reply that is not what the server sends.
+    sent_size and full_size are (width, height) of the picture as sent and as
+    taken. Boxes are clipped to the picture; ones left with no area are dropped.
+    Raises ValueError on a reply that is not what the server sends.
     """
     if not isinstance(reply, dict) or not isinstance(reply.get('detections'), list):
         raise ValueError(f'unexpected reply: {str(reply)[:200]}')
+    (sent_w, sent_h), (full_w, full_h) = sent_size, full_size
+    sx, sy = full_w / sent_w, full_h / sent_h
     detections = []
     for entry in reply['detections']:
         try:
-            label = str(entry['label'])
+            label = entry['label']
             confidence = float(entry['confidence'])
-            x1, y1, x2, y2 = (float(v) / scale for v in entry['box'])
+            x1, y1, x2, y2 = (float(v) for v in entry['box'])
         except (KeyError, TypeError, ValueError) as e:
             raise ValueError(f'bad detection {entry!r}: {e}') from e
-        if not all(map(math.isfinite, (confidence, x1, y1, x2, y2))) or y2 <= y1 or x2 <= x1:
+        if not isinstance(label, str) or not 0 < len(label) <= MAX_LABEL_CHARS:
+            raise ValueError(f'bad label in {entry!r}')
+        if not all(map(math.isfinite, (x1, y1, x2, y2))) or not 0.0 <= confidence <= 1.0:
             raise ValueError(f'bad detection {entry!r}')
-        detections.append(Detection(label, confidence, x1, y1, x2, y2))
+        x1, x2 = (min(max(x * sx, 0.0), full_w) for x in (x1, x2))
+        y1, y2 = (min(max(y * sy, 0.0), full_h) for y in (y1, y2))
+        if x2 > x1 and y2 > y1:
+            detections.append(Detection(label, confidence, x1, y1, x2, y2))
     return detections
 
 
 def post_json(url, body, timeout):
+    """
+    POST body as JSON and return the JSON reply.
+
+    The whole exchange is bounded: about timeout seconds plus at most one slow
+    socket read, and MAX_REPLY_BYTES of reply.
+    """
+    deadline = time.monotonic() + timeout
     request = urllib.request.Request(
         url, data=json.dumps(body).encode('utf-8'),
         headers={'Content-Type': 'application/json'})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode('utf-8'))
+        chunks, size = [], 0
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f'no full reply within {timeout} s')
+            chunk = response.read(READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_REPLY_BYTES:
+                raise ValueError(f'reply over {MAX_REPLY_BYTES} bytes')
+            chunks.append(chunk)
+    return json.loads(b''.join(chunks).decode('utf-8'))
 
 
 class ServerGate:
