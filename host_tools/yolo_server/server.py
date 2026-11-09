@@ -220,12 +220,18 @@ def make_handler(service):
                 length = int(self.headers.get('Content-Length', 0))
                 if not 0 < length <= MAX_BODY_BYTES:
                     raise ValueError(f'body must be 1 to {MAX_BODY_BYTES} bytes')
-                request = json.loads(
-                    read_body(self.rfile, self.connection, length, SOCKET_TIMEOUT_SEC))
+                try:
+                    body = read_body(self.rfile, self.connection, length, SOCKET_TIMEOUT_SEC)
+                finally:
+                    # read_body shortens the timeout; the reply gets the usual one.
+                    self.connection.settimeout(SOCKET_TIMEOUT_SEC)
+                request = json.loads(body)
                 self.reply(200, {**service.detect(request),
                                  'seconds': round(time.monotonic() - started, 4)})
             except (KeyError, TypeError, ValueError) as e:
                 self.reply(400, {'error': str(e)})
+            except OSError:
+                return   # the client left, or the watchdog closed it: nobody to answer
             except torch.cuda.OutOfMemoryError:
                 torch.cuda.empty_cache()
                 self.reply(503, {'error': 'GPU out of memory'})
