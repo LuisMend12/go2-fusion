@@ -12,6 +12,7 @@ import base64
 from collections import namedtuple
 import json
 import math
+import threading
 import time
 import urllib.request
 
@@ -101,6 +102,39 @@ def post_json(url, body, timeout):
                 raise ValueError(f'reply over {MAX_REPLY_BYTES} bytes')
             chunks.append(chunk)
     return json.loads(b''.join(chunks).decode('utf-8'))
+
+
+class DeadlineCaller:
+    """
+    Run one call at a time on a daemon thread and wait for it at most timeout.
+
+    A call that overruns keeps running in the background (Python can't stop a
+    thread), but as a daemon it never holds up the node's exit, and while it
+    runs every new call fails at once instead of piling up more threads.
+    """
+
+    def __init__(self):
+        self.thread = None
+
+    def call(self, fn, *args, timeout):
+        if self.thread is not None and self.thread.is_alive():
+            raise TimeoutError('an earlier request is still waiting for the server')
+        outcome = {}
+
+        def run():
+            try:
+                outcome['value'] = fn(*args)
+            except BaseException as e:   # handed to the caller below
+                outcome['error'] = e
+
+        self.thread = threading.Thread(target=run, daemon=True)
+        self.thread.start()
+        self.thread.join(timeout)
+        if self.thread.is_alive():
+            raise TimeoutError(f'no reply within {timeout} s')
+        if 'error' in outcome:
+            raise outcome['error']
+        return outcome['value']
 
 
 class ServerGate:

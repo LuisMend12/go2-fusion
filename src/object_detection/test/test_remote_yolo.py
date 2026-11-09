@@ -9,6 +9,7 @@ import pytest
 from object_detection import remote_yolo
 from object_detection.remote_yolo import (
     build_request,
+    DeadlineCaller,
     Detection,
     parse_detections,
     post_json,
@@ -123,3 +124,23 @@ def test_post_json_refuses_an_oversized_reply(monkeypatch):
             post_json(url, {'image': ''}, timeout=2.0)
     finally:
         server.shutdown()
+
+
+def test_deadline_caller_returns_the_value_or_the_error():
+    caller = DeadlineCaller()
+    assert caller.call(lambda a, b: a + b, 1, 2, timeout=1.0) == 3
+    with pytest.raises(ZeroDivisionError):
+        caller.call(lambda: 1 / 0, timeout=1.0)
+
+
+def test_a_stuck_call_times_out_and_blocks_new_calls_until_it_ends():
+    release = threading.Event()
+    caller = DeadlineCaller()
+    with pytest.raises(TimeoutError):
+        caller.call(release.wait, timeout=0.05)
+    assert caller.thread.daemon            # never holds up the node's exit
+    with pytest.raises(TimeoutError):      # still stuck: fail at once
+        caller.call(lambda: 'late', timeout=1.0)
+    release.set()
+    caller.thread.join(1.0)
+    assert caller.call(lambda: 'ok', timeout=1.0) == 'ok'

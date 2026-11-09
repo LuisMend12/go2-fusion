@@ -17,7 +17,6 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from tf2_geometry_msgs import do_transform_point
 
 from collections import defaultdict
-import concurrent.futures
 import cv2
 import numpy as np
 import json
@@ -28,6 +27,7 @@ import time
 from object_detection.people import PeopleTracker, people_dict
 from object_detection.remote_yolo import (
     build_request,
+    DeadlineCaller,
     Detection,
     JPEG_QUALITY,
     parse_detections,
@@ -113,9 +113,8 @@ class ObjectDetector(Node):
         self.model = None
         # When loading or running the CPU model failed, when to try again.
         self.local_retry_after = 0.0
-        # One thread for server requests (see detect_on_server).
-        self.server_worker = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        self.server_request = None
+        # Runs server requests with a hard deadline (see detect_on_server).
+        self.server_caller = DeadlineCaller()
         if self.inference_url:
             self.get_logger().info(
                 f"Asking the YOLO server at {self.inference_url} (max {max_rate_hz} Hz, "
@@ -313,12 +312,9 @@ class ObjectDetector(Node):
         """
         Ask the server, waiting at most inference_timeout seconds.
 
-        The request runs on a worker thread so a server that trickles its reply
-        can't hold up this callback. If an earlier request is still stuck
-        there, this one counts as a failure, so at most one thread ever hangs.
+        The request runs on a daemon thread (DeadlineCaller) so a server that
+        trickles its reply can't hold up this callback or the node's exit.
         """
-        if self.server_request is not None and not self.server_request.done():
-            raise TimeoutError("an earlier request is still waiting for the server")
         full_size = (frame.shape[1], frame.shape[0])
         sent_size = send_size(*full_size)
         small = frame if sent_size == full_size else cv2.resize(frame, sent_size)
@@ -326,13 +322,10 @@ class ObjectDetector(Node):
         if not ok:
             raise ValueError("JPEG encoding failed")
         body = build_request(jpeg.tobytes(), self.min_confidence, self.classes)
-        self.server_request = self.server_worker.submit(
-            post_json, self.inference_url, body, self.inference_timeout
+        reply = self.server_caller.call(
+            post_json, self.inference_url, body, self.inference_timeout,
+            timeout=self.inference_timeout,
         )
-        try:
-            reply = self.server_request.result(timeout=self.inference_timeout)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError(f"no reply within {self.inference_timeout} s") from None
         return parse_detections(reply, sent_size, full_size)
 
     def draw(self, frame, detections):

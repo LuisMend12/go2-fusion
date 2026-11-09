@@ -16,6 +16,8 @@ import io
 import json
 import math
 import os
+import socket
+import sys
 import threading
 import time
 import traceback
@@ -42,6 +44,8 @@ MAX_IN_FLIGHT = 4
 SOCKET_TIMEOUT_SEC = 10.0
 # Open connections at once; more are closed before a thread is started.
 MAX_CONNECTIONS = 8
+# Every connection is closed this long after it was accepted, finished or not.
+CONNECTION_DEADLINE_SEC = 15.0
 
 
 class BoundedServer(ThreadingHTTPServer):
@@ -63,25 +67,51 @@ class BoundedServer(ThreadingHTTPServer):
             self.connections.release()
             raise
 
+    def handle_error(self, request, client_address):
+        # Usually the watchdog below closing a slow client: one line, not a traceback.
+        print(f'Dropped the connection from {client_address[0]}: {sys.exc_info()[1]!r}',
+              flush=True)
+
     def process_request_thread(self, request, client_address):
+        # Whatever the client does (trickling headers or body, never reading
+        # the reply), its connection is closed CONNECTION_DEADLINE_SEC after
+        # it was accepted, so no client can hold a slot for long.
+        watchdog = threading.Timer(CONNECTION_DEADLINE_SEC, close_socket, (request,))
+        watchdog.daemon = True
+        watchdog.start()
         try:
             super().process_request_thread(request, client_address)
         finally:
+            watchdog.cancel()
             self.connections.release()
 
 
-def read_body(stream, length, timeout):
-    """Read exactly length bytes, giving up after timeout seconds in all."""
+def close_socket(sock):
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass   # already closed
+
+
+def read_body(stream, sock, length, timeout):
+    """Read exactly length bytes from stream, taking at most timeout seconds in all."""
     deadline = time.monotonic() + timeout
     chunks, left = [], length
     while left > 0:
-        if time.monotonic() > deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             raise ValueError(f'body not received within {timeout} s')
-        chunk = stream.read1(min(left, 65536))
+        sock.settimeout(remaining)
+        try:
+            chunk = stream.read1(min(left, 65536))
+        except socket.timeout:
+            raise ValueError(f'body not received within {timeout} s') from None
         if not chunk:
             raise ValueError('body ended early')
         chunks.append(chunk)
         left -= len(chunk)
+    if time.monotonic() > deadline:
+        raise ValueError(f'body not received within {timeout} s')
     return b''.join(chunks)
 
 
@@ -190,7 +220,8 @@ def make_handler(service):
                 length = int(self.headers.get('Content-Length', 0))
                 if not 0 < length <= MAX_BODY_BYTES:
                     raise ValueError(f'body must be 1 to {MAX_BODY_BYTES} bytes')
-                request = json.loads(read_body(self.rfile, length, SOCKET_TIMEOUT_SEC))
+                request = json.loads(
+                    read_body(self.rfile, self.connection, length, SOCKET_TIMEOUT_SEC))
                 self.reply(200, {**service.detect(request),
                                  'seconds': round(time.monotonic() - started, 4)})
             except (KeyError, TypeError, ValueError) as e:
