@@ -37,6 +37,8 @@ from object_detection.remote_yolo import (
     ServerGate,
 )
 
+from object_detection.people import PeopleTracker, people_dict
+
 # How often the object memory is logged. Logging it on every frame floods
 # the console and the /rosout topic.
 MEMORY_LOG_PERIOD_SEC = 5.0
