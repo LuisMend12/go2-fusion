@@ -2,7 +2,7 @@
 title: Simulator
 parent: lab-setup
 code: [src/go2_sim/**]
-verified: 64fd1f34d0d2
+verified: a36bec7def95
 ---
 
 # Simulator
@@ -133,6 +133,16 @@ The first 10-run batch in the placeholder world, default dials, real-time factor
 Getting there, the simulator caught bugs in [Nav2](nav2.md) (the costmap stall below) and in the [Auto mapper](auto-mapper.md)'s unstuck move (three ways it refused every escape). That batch ran with the first version of those fixes, before the unstuck move learned to check Oak's whole body through its allowed drift. With the final version, one 8-minute run (seed 1, 2026-10-31) mapped 48.3 %, with 0 costmap timeouts and 0 collisions, but latched stopped next to the 1.2 m doorway after 44 s ("no safe direction: rear and both sides lack clearance") and never moved again. Master without the fixes maps 5.0 % in the same run. TODO(Max): re-run the 10-run batch with the final fixes.
 
 Every simulator experiment since 2026-11-06 (hypothesis, change, runs, why each run quit, verdict) is logged in the [experiments journal](experiments.md).
+
+## Score VLM decisions
+
+Comparing whole runs with the VLM on and off needs very many runs: where Oak happens to get stuck swings a run by 50 points either way. Scoring each decision instead turns one run into dozens of paired comparisons. Run the auto mapper in `shadow` mode with a navigation log (`--explorer-param vlm_mode:=shadow --explorer-param nav_log_dir:=<run>/nav`), then:
+
+```shell
+ros2 run go2_sim score_decisions <run folder> [<run folder> ...] --csv decisions.csv
+```
+
+Each run folder holds `nav/` and the trial runner's output (its `results.csv` gives the start pose; its `.gt.yaml` is the true map). For every logged ranking it sweeps 360 lidar rays out to 4 m from each candidate on the true map, stopping at real walls, and counts the cells that were still unknown then, minus the explorer's walking cost (100 cells per meter). It prints, where the VLM picked differently, how much better or worse its pick really was, and how often each pick was the truly best candidate. It only works in the simulator, where the true map exists, and it values a goal by what a full turn there would show, not by what Oak sees on the way.
 
 ## VLM test (2026-10-31)
 

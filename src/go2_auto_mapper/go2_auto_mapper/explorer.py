@@ -1040,9 +1040,38 @@ class FrontierExplorer(Node):
             f'with VLM ({theirs[1]:.2f}, {theirs[2]:.2f}). Scores '
             f'{[round(s, 2) for s in scores]}: {self.vlm_ranking.reason}'
         )
+        self.log_vlm_decision(robot_x, robot_y, top, scores, ours, theirs)
         # Spent: the next goal is asked about from wherever the robot is then.
         self.vlm_ranking = None
         return pool if self.vlm_mode == 'shadow' else ranked
+
+    def log_vlm_decision(self, robot_x, robot_y, top, scores, ours, theirs):
+        """
+        Note this ranking in the navigation log, with the map as it is now.
+
+        In shadow mode the VLM's pick is never driven to, so this record is the only trace of
+        it; a scorer can later count what each pick would have revealed. A logging failure must
+        not stop exploring.
+        """
+        if self.nav_log is None or self.map is None:
+            return
+        try:
+            info = self.map.info
+            candidates = [
+                {'x': round(c[1], 3), 'y': round(c[2], 3), 'map_score': round(c[0], 1),
+                 'vlm_score': round(s, 3), 'distance_m': round(c[7], 2)}
+                for c, s in zip(top, scores)
+            ]
+            self.nav_log.decision(
+                (robot_x, robot_y), candidates,
+                next(i for i, c in enumerate(top) if c[1:3] == ours[1:3]),
+                next(i for i, c in enumerate(top) if c[1:3] == theirs[1:3]),
+                self.vlm_mode,
+                (info.resolution, info.origin.position.x, info.origin.position.y,
+                 info.width, info.height, self.map.data),
+            )
+        except Exception as e:
+            self.get_logger().warn(f'Navigation log error: {e}')
 
     def ask_vlm(self, top, robot_x, robot_y):
         """Send the camera views toward the best goals; False if there are
