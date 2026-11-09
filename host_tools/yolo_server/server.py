@@ -38,8 +38,51 @@ MAX_CLASSES = 50
 MAX_CLASS_CHARS = 64
 # Requests decoded or waiting for the GPU at once; more are refused (503).
 MAX_IN_FLIGHT = 4
-# Seconds a client may take to send its request.
+# Seconds a client may wait between bytes, and to send its whole body.
 SOCKET_TIMEOUT_SEC = 10.0
+# Open connections at once; more are closed before a thread is started.
+MAX_CONNECTIONS = 8
+
+
+class BoundedServer(ThreadingHTTPServer):
+    """A threaded server that refuses connections beyond MAX_CONNECTIONS."""
+
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.connections = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        if not self.connections.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.connections.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.connections.release()
+
+
+def read_body(stream, length, timeout):
+    """Read exactly length bytes, giving up after timeout seconds in all."""
+    deadline = time.monotonic() + timeout
+    chunks, left = [], length
+    while left > 0:
+        if time.monotonic() > deadline:
+            raise ValueError(f'body not received within {timeout} s')
+        chunk = stream.read1(min(left, 65536))
+        if not chunk:
+            raise ValueError('body ended early')
+        chunks.append(chunk)
+        left -= len(chunk)
+    return b''.join(chunks)
 
 
 def decode_image(text):
@@ -147,7 +190,7 @@ def make_handler(service):
                 length = int(self.headers.get('Content-Length', 0))
                 if not 0 < length <= MAX_BODY_BYTES:
                     raise ValueError(f'body must be 1 to {MAX_BODY_BYTES} bytes')
-                request = json.loads(self.rfile.read(length))
+                request = json.loads(read_body(self.rfile, length, SOCKET_TIMEOUT_SEC))
                 self.reply(200, {**service.detect(request),
                                  'seconds': round(time.monotonic() - started, 4)})
             except (KeyError, TypeError, ValueError) as e:
@@ -172,4 +215,4 @@ if __name__ == '__main__':
     print(f'YOLO {MODEL_PATH} ready on {DEVICE}, port {PORT}', flush=True)
     # Localhost by default: this has no password, so reach it over an SSH tunnel.
     host = os.environ.get('YOLO_HOST', '127.0.0.1')
-    ThreadingHTTPServer((host, PORT), make_handler(service)).serve_forever()
+    BoundedServer((host, PORT), make_handler(service)).serve_forever()
