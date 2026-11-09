@@ -2,7 +2,7 @@
 title: Auto mapper
 parent: maps-nav
 code: [src/go2_auto_mapper/**]
-verified: 0db04c86ad46
+verified: cf5b86ee5e00
 ---
 
 # Auto mapper
@@ -29,12 +29,6 @@ Part of: [Maps and navigation](maps-nav.md)
 9. **Finish.** With no frontiers left it logs "Exploration complete" and waits, in case a door opens.
 
 **People.** When [object detection](object-detection.md) runs, it publishes `/people`: where each person is, a straight-line guess of where they will walk, and who stands together in a group (ideas from [SocialNav](https://github.com/ram95d/SocialNav)). The explorer keeps goals out of a 1 m circle around each person, out of a 0.6 m band along their next 2.4 s of walking, and out of the inside of a group (a robot should go around two people talking, not between them). A goal whose straight path crosses one of these only loses ties. This is a ranking step like the others, so a room full of people never stops exploring. Without `/people`, nothing changes.
-
-At the same state transitions it publishes structured, reliable
-`/auto_mapper/events` messages for the [Scoreboard](scoreboard.md): exploration
-start/stop/completion, goal sent/accepted/outcome, recovery start/finish and
-stale sensing. These messages observe existing choices; they do not choose a
-frontier, change a threshold or send motion.
 
 **Buttons.** The RViz AutoMapper panel has **Start/Stop**, **Scan** (pause the goal, forget recent failures, turn 360 degrees; the same as calling `/frontier_explorer/scan`) and **Reset maps** (restart SLAM with an empty 2D map and clear the 3D point cloud).
 
@@ -124,8 +118,8 @@ From the package README and Luis's commits (Oct 14-19):
 - **Backing up is new on the real Oak.** Before pull request #41 these moves were always refused, so Oak has never actually backed up or slid sideways on its own. Now it will. The first tries on the real floor need a spotter ready to stop it (an empty Twist on `/cmd_vel_joy`, or the gamepad).
 - **Ctrl+C did not stop cleanly.** ROS shut itself down before the auto mapper's stop step ran, so the final zero speed and the Nav2 goal cancel never went out. Fixed in pull request #41: ROS now stays up until that step is done.
 - **Waits for fresh data.** After every scan or move it waits up to 12 s for newer `/scan`, `/point_cloud2`, `/map`, costmap and TF. If they don't come, exploration stays stopped until Scan is pressed.
-- **The 3D cloud forgets moved objects only where Oak looks** (see [Lidar](lidar.md)); neither SLAM nor the 3D map is cleared during recovery.
-- **People positions are rough.** They come from the camera's box-height guess, and on master left and right are flipped (see [Object detection](object-detection.md)), so Oak can wait for, or steer around, a person on the wrong side. The camera only looks forward, so people behind or beside Oak are not seen. TODO(Luis): test with people in the lab.
+- **The 3D cloud never forgets** moved objects; neither SLAM nor the 3D map is cleared during recovery.
+- **People positions are rough.** They come from the camera's box-height guess (see [Object detection](object-detection.md)), so Oak can wait for a person who is farther away than they look, or steer around one who is not quite where they seem. The camera only looks forward, so people behind or beside Oak are not seen. TODO(Luis): test with people in the lab.
 - **Waiting too long gets the goal dropped.** Nav2 gives up a goal after 10 s without movement (`movement_time_allowance`); the 6 s wait stays under that, so don't raise one without the other.
 - **Big maps** make each step slower, because the whole map is rescanned every cycle.
 - **VLM server down or slow** (tunnel closed, server off, wrong address): it logs "VLM gave no ranking" with the reason, uses the map score alone, and tries again after 30 s. Exploring never stops for it. In `active` mode each goal can wait up to `vlm_timeout` seconds first.

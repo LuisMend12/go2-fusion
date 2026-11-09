@@ -17,9 +17,8 @@ from action_msgs.srv import CancelGoal
 from nav_msgs.msg import OccupancyGrid
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped, Twist
-from sensor_msgs.msg import Image, LaserScan, PointCloud2
+from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import String
-from go2_interfaces.msg import AutoMapperEvent
 from go2_auto_mapper.recovery import (
     DRIFT_ACROSS_M,
     DRIFT_YAW_RAD,
@@ -59,15 +58,6 @@ from go2_auto_mapper.frontier_scoring import (
     world_key,
 )
 from go2_auto_mapper.social_space import line_crosses, parse_people, social_zones, zone_at
-from go2_auto_mapper.nav_log import NavLog, known_cell_count
-from go2_auto_mapper.vlm_ranking import (
-    ViewMemory,
-    VlmClient,
-    match_score,
-    suggestion_bonus,
-    usable_heading,
-    vlm_bonus,
-)
 
 
 class FrontierExplorer(Node):
@@ -2538,51 +2528,6 @@ PEOPLE_MAX_AGE_SEC = 2.0
 # movement_time_allowance in nav2_params.yaml) or Nav2 aborts the goal.
 YIELD_LOOKAHEAD_M = 1.5
 YIELD_MAX_SEC = 6.0
-
-# choose_frontier's answer while active VLM mode waits for a ranking.
-WAITING_FOR_VLM = object()
-
-# Camera views kept for the VLM: one per 45 degrees of heading, a few per
-# second at most. A view counts toward a goal if it was taken within
-# VIEW_MAX_OFFSET_M of where the robot is now, in the last VIEW_MAX_AGE_SEC,
-# and faces within VIEW_MAX_ANGLE_RAD of the goal (inside a ~90 degree
-# camera view).
-VIEW_BINS = 8
-VIEW_PERIOD_SEC = 0.3
-VIEW_MAX_OFFSET_M = 1.0
-VIEW_MAX_AGE_SEC = 120.0
-VIEW_MAX_ANGLE_RAD = math.radians(35.0)
-
-# A VLM ranking applies to goals within VLM_MATCH_RADIUS_M of the ones it
-# was asked about, for VLM_RESULT_MAX_AGE_SEC. After a failed request, the
-# map score is used alone for VLM_RETRY_SEC before asking again.
-VLM_MATCH_RADIUS_M = 0.5
-VLM_RESULT_MAX_AGE_SEC = 30.0
-VLM_RETRY_SEC = 30.0
-
-# Images sent to the VLM are shrunk to this width: plenty for "doorway or
-# wall", and it keeps each request small over the SSH tunnel.
-VLM_IMAGE_WIDTH = 448
-VLM_JPEG_QUALITY = 80
-
-
-def encode_jpeg(msg):
-    """A camera Image message as JPEG bytes, shrunk to VLM_IMAGE_WIDTH.
-
-    Imported here so the explorer runs without OpenCV when vlm_mode is off.
-    Runs on the VLM client's thread, not the explorer's.
-    """
-    import cv2
-    from cv_bridge import CvBridge
-
-    image = CvBridge().imgmsg_to_cv2(msg, desired_encoding='bgr8')
-    height, width = image.shape[:2]
-    if width > VLM_IMAGE_WIDTH:
-        image = cv2.resize(image, (VLM_IMAGE_WIDTH, int(height * VLM_IMAGE_WIDTH / width)))
-    ok, jpeg = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, VLM_JPEG_QUALITY])
-    if not ok:
-        raise ValueError('JPEG encoding failed')
-    return jpeg.tobytes()
 
 
 def stop_when_parent_dies():
