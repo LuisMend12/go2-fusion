@@ -17,12 +17,24 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from tf2_geometry_msgs import do_transform_point
 
 from collections import defaultdict
+import cv2
 import numpy as np
 import json
 import math
 import os
+import time
 
 from object_detection.people import PeopleTracker, people_dict
+from object_detection.remote_yolo import (
+    build_request,
+    Detection,
+    JPEG_QUALITY,
+    parse_detections,
+    post_json,
+    RETRY_SEC,
+    send_scale,
+    ServerGate,
+)
 
 # How often the object memory is logged. Logging it on every frame floods
 # the console and the /rosout topic.
@@ -77,27 +89,35 @@ class ObjectDetector(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
 
         torch.set_num_threads(num_threads)
-        self.get_logger().info(
-            f"Loading YOLO model from {model_path} "
-            f"({num_threads} CPU threads, max {max_rate_hz} Hz, "
-            f"min confidence {self.min_confidence})"
-        )
-        self.model = YOLO(model_path)
+        self.model_path = model_path
         # Open-vocabulary weights (YOLOE, as in SocialNav) look for any names
         # you give them, e.g. "person,chair,red box"; empty keeps the
         # model's own classes.
-        classes = [
+        self.classes = [
             c.strip() for c in self.declare_parameter("classes", "").value.split(",")
             if c.strip()
         ]
-        if classes and hasattr(self.model, "set_classes"):
-            self.model.set_classes(classes)
-            self.get_logger().info(f"Looking for: {classes}")
-        elif classes:
-            self.get_logger().error(
-                f"{model_path} has fixed classes; `classes` needs YOLOE weights, "
-                "e.g. model_path:=yoloe-26s-seg.pt"
+        # A YOLO server on a GPU machine (host_tools/yolo_server/server.py),
+        # usually through an SSH tunnel. Empty runs YOLO here on the CPU. When
+        # the server fails, the CPU model takes over for RETRY_SEC.
+        self.inference_url = self.declare_parameter(
+            "inference_url", os.environ.get("YOLO_URL", "")
+        ).value
+        self.inference_timeout = self.declare_parameter("inference_timeout_sec", 1.0).value
+        self.server_gate = ServerGate()
+        self.model = None
+        if self.inference_url:
+            self.get_logger().info(
+                f"Asking the YOLO server at {self.inference_url} (max {max_rate_hz} Hz, "
+                f"min confidence {self.min_confidence}); the CPU model loads only "
+                "if it fails"
             )
+        else:
+            self.get_logger().info(
+                f"{num_threads} CPU threads, max {max_rate_hz} Hz, "
+                f"min confidence {self.min_confidence}"
+            )
+            self.load_local_model()
 
         # Depth 1: when inference falls behind, only the newest frame is kept
         # instead of a backlog of stale ones.
@@ -216,6 +236,74 @@ class ObjectDetector(Node):
         return self.tf_buffer.lookup_transform(target, source, Time())
 
     # ==========================================================
+    # Detecting: on the YOLO server or here
+    # ==========================================================
+    def load_local_model(self):
+        self.get_logger().info(f"Loading YOLO model from {self.model_path}")
+        self.model = YOLO(self.model_path)
+        if self.classes and hasattr(self.model, "set_classes"):
+            self.model.set_classes(self.classes)
+            self.get_logger().info(f"Looking for: {self.classes}")
+        elif self.classes:
+            self.get_logger().error(
+                f"{self.model_path} has fixed classes; `classes` needs YOLOE weights, "
+                "e.g. model_path:=yoloe-26s-seg.pt"
+            )
+
+    def detect(self, frame):
+        """Boxes in frame (full-size pixels): from the server if it answers, else here."""
+        now = time.monotonic()
+        if self.inference_url and self.server_gate.use_server(now):
+            try:
+                detections = self.detect_on_server(frame)
+            except Exception as e:   # a down server or tunnel must not end the node
+                if self.server_gate.failed(now):
+                    self.get_logger().warn(
+                        f"YOLO server not answering ({e}); using the CPU model, "
+                        f"trying the server again every {RETRY_SEC:.0f} s"
+                    )
+            else:
+                if self.server_gate.succeeded():
+                    self.get_logger().info("YOLO server answering again")
+                return detections
+        if self.model is None:
+            self.load_local_model()
+        # verbose=False: ultralytics otherwise prints a line per frame.
+        # conf: boxes below min_confidence are dropped here, so they are
+        # neither remembered nor drawn.
+        results = self.model(frame, conf=self.min_confidence, verbose=False)
+        return [
+            Detection(self.model.names[int(box.cls[0])], float(box.conf[0]),
+                      *(float(v) for v in box.xyxy[0]))
+            for box in results[0].boxes
+        ]
+
+    def detect_on_server(self, frame):
+        scale = send_scale(frame.shape[1])
+        small = frame if scale == 1.0 else cv2.resize(
+            frame, (round(frame.shape[1] * scale), round(frame.shape[0] * scale))
+        )
+        ok, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        if not ok:
+            raise ValueError("JPEG encoding failed")
+        body = build_request(jpeg.tobytes(), self.min_confidence, self.classes)
+        return parse_detections(
+            post_json(self.inference_url, body, self.inference_timeout), scale
+        )
+
+    def draw(self, frame, detections):
+        """Return a copy of frame with each box and its label drawn on."""
+        annotated = frame.copy()
+        for d in detections:
+            corner = (int(d.x1), int(d.y1))
+            cv2.rectangle(annotated, corner, (int(d.x2), int(d.y2)), (0, 165, 255), 2)
+            cv2.putText(
+                annotated, f"{d.label} {d.confidence:.2f}", (corner[0], max(12, corner[1] - 4)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1,
+            )
+        return annotated
+
+    # ==========================================================
     # Main Callback
     # ==========================================================
     def rgb_callback(self, msg):
@@ -226,15 +314,12 @@ class ObjectDetector(Node):
         self.last_inference_sec = now_sec
 
         frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        # verbose=False: ultralytics otherwise prints a line per frame.
-        # conf: boxes below min_confidence are dropped here, so they are
-        # neither remembered nor drawn.
-        results = self.model(frame, conf=self.min_confidence, verbose=False)
+        detections = self.detect(frame)
 
         # Drawing and sending a full-size image is costly, so skip it when
         # nobody (e.g. an RViz Image display) is watching.
         if self.annotated_pub.get_subscription_count() > 0:
-            annotated = results[0].plot()
+            annotated = self.draw(frame, detections)
             annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
             self.annotated_pub.publish(annotated_msg)
 
@@ -277,13 +362,11 @@ class ObjectDetector(Node):
         person_points = []
 
         # Process detections
-        for box in results[0].boxes:
+        for detection in detections:
 
-            cls = int(box.cls[0])
-            label = self.model.names[cls]
-            confidence = float(box.conf[0])
-
-            x1, y1, x2, y2 = box.xyxy[0]
+            label = detection.label
+            confidence = detection.confidence
+            x1, y1, x2, y2 = detection.x1, detection.y1, detection.x2, detection.y2
 
             center_x = (x1 + x2) / 2
             box_height = (y2 - y1)
