@@ -2,7 +2,7 @@
 title: Docker
 parent: lab-setup
 code: [docker/**, requirements.txt]
-verified: c940962a6e69
+verified: c193ac41bac9
 ---
 
 # Docker
@@ -50,7 +50,8 @@ On Windows from PowerShell, add `-f docker-compose.windows.yml` after `docker co
 - `Dockerfile` - the main image (CPU-only PyTorch, to avoid a multi-GB GPU download).
 - `docker-compose.yml` - for Linux and WSL: shares your display (for RViz), gamepads (`/dev/input`) and the host network.
 - `docker-compose.windows.yml` - for Windows PowerShell: no display or gamepad, and publishes Foxglove on port 8765 (change with `FOXGLOVE_PORT`).
-- `docker-compose.gpu.yml` + `Dockerfile.gpu` - optional, on top of the Windows file, for an NVIDIA GPU: YOLO runs on CUDA and RViz draws on the GPU.
+- Both compose files pass `YOLO_URL` from your shell into the container (empty by default), so [object detection](object-detection.md) can ask a YOLO server on the GPU machine.
+- `docker-compose.gpu.yml` + `Dockerfile.gpu` - optional, on top of the Windows file, for an NVIDIA GPU: YOLO runs on CUDA (unless `YOLO_URL` points at a YOLO server) and RViz draws on the GPU.
 - `mac/` - the Mac setup (see [Mac setup](mac-setup.md)).
 - `entrypoint.sh`, `dev_aliases.sh` - start-up build and the shortcuts above.
 - `../requirements.txt` - Python libraries. ROS libraries go in each package's `package.xml` instead.
