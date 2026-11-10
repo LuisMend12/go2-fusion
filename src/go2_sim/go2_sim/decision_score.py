@@ -15,7 +15,10 @@ No ROS here, so it tests on any machine.
     score_decisions RUN_DIR [RUN_DIR ...]
 
 where each RUN_DIR holds nav/decisions.jsonl and the trial runner's output folder
-(results.csv with the start pose, and the world's .gt.yaml true map).
+(results.csv with the start pose, and the world's .gt.yaml true map). One run per
+RUN_DIR: the scorer takes the first start pose and the newest true map it finds, so run
+the trial runner with --runs 1 and its own nav_log_dir per run (as --first-index allows).
+A score is what a full sweep at the goal would show, not whether Oak could reach it.
 """
 
 import argparse
@@ -94,7 +97,8 @@ def true_reveal(gt, snapshot, start_pose, x, y, rays=TRUE_RAYS, range_m=RANGE_M)
     return len(seen)
 
 
-def score_decision(record, snapshot, gt, start_pose, cells_per_meter=CELLS_PER_METER):
+def score_decision(record, snapshot, gt, start_pose, cells_per_meter=CELLS_PER_METER,
+                   range_m=RANGE_M):
     """
     Return the true value of every candidate and of both picks for one decision.
 
@@ -103,7 +107,7 @@ def score_decision(record, snapshot, gt, start_pose, cells_per_meter=CELLS_PER_M
     """
     values = []
     for c in record['candidates']:
-        revealed = true_reveal(gt, snapshot, start_pose, c['x'], c['y'])
+        revealed = true_reveal(gt, snapshot, start_pose, c['x'], c['y'], range_m=range_m)
         values.append(revealed - cells_per_meter * c['distance_m'])
     best = max(values)
     return {
@@ -126,7 +130,7 @@ def read_start_pose(results_csv):
     return float(row['start_x']), float(row['start_y']), float(row['start_yaw'])
 
 
-def score_run(run_dir):
+def score_run(run_dir, cells_per_meter=CELLS_PER_METER, range_m=RANGE_M):
     """Score every decision of one run; return a list of score dicts."""
     nav = os.path.join(run_dir, 'nav')
     results = sorted(glob.glob(os.path.join(run_dir, '*', 'results.csv')))
@@ -143,7 +147,7 @@ def score_run(run_dir):
             if not record.get('map'):
                 continue
             snapshot = read_snapshot(os.path.join(nav, record['map']))
-            score = score_decision(record, snapshot, gt, start_pose)
+            score = score_decision(record, snapshot, gt, start_pose, cells_per_meter, range_m)
             score.update(run=os.path.basename(run_dir.rstrip('/')),
                          decision=record['decision'])
             scores.append(score)
@@ -178,8 +182,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('run_dirs', nargs='+')
     parser.add_argument('--csv', help='also write every scored decision here')
+    parser.add_argument('--range-m', type=float, default=RANGE_M,
+                        help="sweep range (m); match the explorer's info_gain_range")
+    parser.add_argument('--cells-per-meter', type=float, default=CELLS_PER_METER,
+                        help="walking cost; match the explorer's info_gain_cells_per_meter")
     args = parser.parse_args(argv)
-    scores = [s for d in args.run_dirs for s in score_run(d)]
+    scores = [s for d in args.run_dirs
+              for s in score_run(d, args.cells_per_meter, args.range_m)]
     if args.csv:
         with open(args.csv, 'w', newline='') as f:
             writer = csv.writer(f)

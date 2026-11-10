@@ -96,3 +96,16 @@ def test_a_vlm_ranking_is_logged_with_both_picks_and_the_map(tmp_path):
     assert saved['data'].shape == (2, 3)
     assert saved['data'][0, 2] == 100
     assert float(saved['resolution']) == 0.05
+
+
+def test_a_restart_into_the_same_folder_keeps_the_earlier_maps(tmp_path):
+    import numpy as np
+    candidates = [{'x': 1.0, 'y': 0.0, 'map_score': 0.0, 'vlm_score': 0.5, 'distance_m': 1.0}]
+    first, second = NavLog(str(tmp_path)), NavLog(str(tmp_path))   # explorer started twice
+    first.decision((0.0, 0.0), candidates, 0, 0, 'shadow', (0.05, 0.0, 0.0, 1, 1, [0]))
+    second.decision((0.0, 0.0), candidates, 0, 0, 'shadow', (0.05, 0.0, 0.0, 1, 1, [100]))
+    with open(os.path.join(tmp_path, 'decisions.jsonl')) as f:
+        maps = [json.loads(line)['map'] for line in f]
+    assert len(set(maps)) == 2
+    assert np.load(os.path.join(tmp_path, maps[0]))['data'][0, 0] == 0
+    assert np.load(os.path.join(tmp_path, maps[1]))['data'][0, 0] == 100
