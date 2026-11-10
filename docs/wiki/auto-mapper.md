@@ -2,7 +2,7 @@
 title: Auto mapper
 parent: maps-nav
 code: [src/go2_auto_mapper/**]
-verified: b996d3e4c6aa
+verified: 8546f992504f
 ---
 
 # Auto mapper
@@ -94,7 +94,7 @@ The model needs an NVIDIA GPU, so it runs on a GPU server, not the laptop. **Cam
 
 1. **On the GPU server** (over SSH), start an OpenAI-style server. With vLLM: `vllm serve Qwen/Qwen2.5-VL-7B-Instruct --port 8000`. With Ollama: `ollama pull qwen2.5vl:7b`, then use port 11434 and `vlm_model:=qwen2.5vl:7b`. TODO(Luis): which server and model fit the cloud GPU's memory.
 2. **On the laptop**, open the tunnel and leave it running: `ssh -N -L 8000:localhost:8000 <user>@<gpu-server>`. Now `localhost:8000` on the laptop is the server.
-3. **Start the explorer in shadow mode first**, so Oak drives exactly as before while you read what the VLM would have done (it only pauses up to `vlm_timeout` at each goal choice to hear the answer, the same pause as `active` mode):
+3. **Start the explorer in shadow mode first**: it keeps the map's ranking while you read what the VLM would have done. It pauses up to `vlm_timeout` at each goal choice to hear the answer, the same pause as `active` mode, so a run can still turn out a little differently from one with the VLM off:
    ```shell
    docker compose exec unitree_ros bash -ic 'ros2 run go2_auto_mapper explorer --ros-args -p vlm_mode:=shadow'
    ```

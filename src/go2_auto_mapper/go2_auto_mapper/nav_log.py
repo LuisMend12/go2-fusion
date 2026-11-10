@@ -14,6 +14,7 @@ any machine. A failed write warns and never stops the robot's exploring.
 import json
 import os
 import time
+import uuid
 
 
 class NavLog:
@@ -24,6 +25,9 @@ class NavLog:
         self.goal = None
         self.count = 0
         self.decisions = 0
+        # Part of every snapshot name, so a restart into the same folder can't
+        # overwrite the maps earlier decisions point to.
+        self.session = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         self.path = os.path.join(folder, 'goals.jsonl')
         try:
             os.makedirs(folder, exist_ok=True)
@@ -100,7 +104,7 @@ class NavLog:
 
     def _write_grid(self, grid):
         resolution, origin_x, origin_y, width, height, data = grid
-        name = f'map_{self.decisions:04d}.npz'
+        name = f'map_{self.session}_{self.decisions:04d}.npz'
         try:
             import numpy as np
             np.savez_compressed(
