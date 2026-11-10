@@ -2,7 +2,7 @@
 title: Auto mapper
 parent: maps-nav
 code: [src/go2_auto_mapper/**]
-verified: cf5b86ee5e00
+verified: 8546f992504f
 ---
 
 # Auto mapper
@@ -30,6 +30,12 @@ Part of: [Maps and navigation](maps-nav.md)
 
 **People.** When [object detection](object-detection.md) runs, it publishes `/people`: where each person is, a straight-line guess of where they will walk, and who stands together in a group (ideas from [SocialNav](https://github.com/ram95d/SocialNav)). The explorer keeps goals out of a 1 m circle around each person, out of a 0.6 m band along their next 2.4 s of walking, and out of the inside of a group (a robot should go around two people talking, not between them). A goal whose straight path crosses one of these only loses ties. This is a ranking step like the others, so a room full of people never stops exploring. Without `/people`, nothing changes.
 
+At the same state transitions it publishes structured, reliable
+`/auto_mapper/events` messages for the [Scoreboard](scoreboard.md): exploration
+start/stop/completion, goal sent/accepted/outcome, recovery start/finish and
+stale sensing. These messages observe existing choices; they do not choose a
+frontier, change a threshold or send motion.
+
 **Buttons.** The RViz AutoMapper panel has **Start/Stop**, **Scan** (pause the goal, forget recent failures, turn 360 degrees; the same as calling `/frontier_explorer/scan`) and **Reset maps** (restart SLAM with an empty 2D map and clear the 3D point cloud).
 
 ### The finer details
@@ -39,7 +45,7 @@ Part of: [Maps and navigation](maps-nav.md)
 - **Unstuck moves, exactly.** It checks the whole padded body (0.36 m forward, 0.45 m back, 0.40 m wide, plus a 5 cm margin) everywhere it could be during the move: anywhere along the way, up to 0.05 m off the line and turned up to 0.10 rad (about 6 degrees), which are the limits that abort the move. They were 0.10 m and 0.15 rad; at those, the bigger envelope touched walls 0.17 m away and Oak never made a recovery move in the simulator. Only walls themselves (lethal costmap cells) block it, not their inflation. The one exception is the obstacle that stopped Oak: while backing straight away from it, anything past the nose is ignored. Unknown cells, a scan older than 0.75 s, and missing or infinite rays toward the space the move enters all count as unsafe. It picks the safe corridor with the most extra clearance, moves for at most 8 seconds, and rechecks 4 times a second. `/scan` must be in the `base_link` frame. If no direction is safe, the robot drifts, or clearance disappears, it stays stopped (a "latch"). A later fresh scan clears the latch when the way ahead is open, or starts another short move when a rear or side corridor has opened; **Scan** clears it at once.
 - **After a move** it stays stopped until a newer `/scan`, live `/point_cloud2`, local costmap and map/odom transforms arrive. A new SLAM `/map` is needed only when the move was at least 0.2 m (slam_toolbox's minimum travel). Obstacles that moved away are cleared by Nav2's costmap voxel layer tracing `/scan` (`clearing: true` in `nav2_params.yaml`); unknown local costmap cells stay unknown, so recovery never treats them as free. The scan's height filter also limits which obstacles recovery can see.
 - **Stuck** means 3 failed goals in a row (`stuck_failure_count`), an obstacle-ahead abort, or "No usable goal" twice running. The open-space search goes through free space up to 4 m away (so never through walls). A failed escape does not trigger another one, escapes are at least 30 s apart, and escape goals always trigger a scan, even with `scan_after_goal` off. A failed scan also leaves exploration stopped.
-- **Stopping.** Ctrl+C sends a zero speed on `/cmd_vel_mapper`, then cancels the in-flight Nav2 goal and any Spin or back-up still running, waiting up to 2 s for each cancel to reach Nav2, so Oak does not keep walking toward a goal nobody tracks. Publishing an empty Twist on `/cmd_vel_joy` works as an emergency stop because twist_mux gives it the highest priority (10), overriding Nav2.
+- **Stopping.** Ctrl+C (or `docker stop`, which sends SIGTERM) first stops the explorer's own timers, so nothing new starts moving Oak, and refuses new Scan requests. It sends a zero speed on `/cmd_vel_mapper` and cancels the goal Oak is walking to first, then any Spin or back-up still running, waiting up to 2 s for each cancel to reach Nav2, so Oak does not keep walking toward a goal nobody tracks. A goal Nav2 has not answered yet has nothing to cancel, so it waits up to 2 s for the answer; if Nav2 never answers, it cancels every goal on that action, other programs' too, because stopping the robot is the safe side. Publishing an empty Twist on `/cmd_vel_joy` works as an emergency stop because twist_mux gives it the highest priority (10), overriding Nav2.
 
 ### Settings
 
@@ -74,7 +80,9 @@ Part of: [Maps and navigation](maps-nav.md)
 
 ### The navigation log
 
-Set `NAV_LOG_DIR` in the container's environment (or the `nav_log_dir` parameter) and the explorer keeps a diary in that folder: `goals.jsonl` has one line per goal, with where Oak was, the goal, how it ended (`reached`, `failed` or `paused`), how many new map squares it led to (`revealed_cells`), and any recovery moves or stuck moments. With the VLM on, it also saves the camera picture toward the goal. Off by default. It is there for reading a run afterwards, and as training data if the VLM is ever fine-tuned: a picture labeled by what walking that way really showed. The last goal of a run is not written, because it is only finished when the next goal is sent.
+Set `NAV_LOG_DIR` in the container's environment (or the `nav_log_dir` parameter) and the explorer keeps a diary in that folder: `goals.jsonl` has one line per goal, with where Oak was, the goal, how it ended (`reached`, `failed` or `paused`), how many new map squares it led to (`revealed_cells`), and any recovery moves or stuck moments. With the VLM on, it also saves the camera picture toward the goal. Off by default. It is there for reading a run afterwards, and as training data if the VLM is ever fine-tuned: a picture labeled by what walking that way really showed. Each goal is written when the next one is sent, and the last one when the explorer stops.
+
+With the VLM on (`shadow` or `active`), it also writes `decisions.jsonl`: one line per VLM ranking, with every candidate goal, the map score's pick, the VLM's pick, and the map at that moment saved beside it (`map_0001.npz` and so on). In `shadow` mode the VLM's pick is never driven to, so this is the only trace of what it would have done; the [Simulator](simulator.md#score-vlm-decisions) can score each pick against the true map.
 
 ### SocialNav paths (watch only)
 
@@ -86,7 +94,7 @@ The model needs an NVIDIA GPU, so it runs on a GPU server, not the laptop. **Cam
 
 1. **On the GPU server** (over SSH), start an OpenAI-style server. With vLLM: `vllm serve Qwen/Qwen2.5-VL-7B-Instruct --port 8000`. With Ollama: `ollama pull qwen2.5vl:7b`, then use port 11434 and `vlm_model:=qwen2.5vl:7b`. TODO(Luis): which server and model fit the cloud GPU's memory.
 2. **On the laptop**, open the tunnel and leave it running: `ssh -N -L 8000:localhost:8000 <user>@<gpu-server>`. Now `localhost:8000` on the laptop is the server.
-3. **Start the explorer in shadow mode first**, so Oak behaves exactly as before while you read what the VLM would have done:
+3. **Start the explorer in shadow mode first**: it keeps the map's ranking while you read what the VLM would have done. It pauses up to `vlm_timeout` at each goal choice to hear the answer, the same pause as `active` mode, so a run can still turn out a little differently from one with the VLM off:
    ```shell
    docker compose exec unitree_ros bash -ic 'ros2 run go2_auto_mapper explorer --ros-args -p vlm_mode:=shadow'
    ```
@@ -102,9 +110,9 @@ The model needs an NVIDIA GPU, so it runs on a GPU server, not the laptop. **Cam
 - [Object detection](object-detection.md) - reads `/people` (people, their walking forecast and groups, `odom` frame).
 - [RViz panels](rviz-panels.md) - the AutoMapper panel starts and stops it.
 - [Simulator](simulator.md) - try it with no robot, or score it over 10 runs.
+- [Scoreboard](scoreboard.md) - counts goals and recoveries from structured events.
 - [RViz panels](rviz-panels.md) - the VLM view button runs `vlm_view`, which publishes `/vlm/view` (picture) and `/vlm/description` (text).
 - [Camera](camera.md) - with `vlm_mode` on, keeps one `/camera/image_raw` picture per direction for the VLM.
-- [Scoreboard](scoreboard.md) - counts goals and recoveries from structured events.
 
 ## How it breaks
 
