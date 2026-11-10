@@ -33,18 +33,24 @@ class FakeClient:
         return result
 
 
-def explorer_stub(mode, client):
+def explorer_stub(mode, client, nav_log=None):
     messages = []
+    grid = SimpleNamespace(
+        info=SimpleNamespace(resolution=0.05, width=2, height=1,
+                             origin=SimpleNamespace(position=SimpleNamespace(x=0.0, y=0.0))),
+        data=[-1, 0])
     node = SimpleNamespace(
         vlm_mode=mode, vlm_client=client, vlm_weight=400.0, vlm_timeout=8.0,
         vlm_candidates=4, vlm_ranking=None, vlm_wait_started=None,
         vlm_retry_after=0.0, views=ViewMemory(bins=8), messages=messages,
-        info_gain_cells_per_meter=100.0,
+        info_gain_cells_per_meter=100.0, nav_log=nav_log, map=grid,
     )
     logger = SimpleNamespace(
         info=lambda m, **k: messages.append(m), warn=lambda m, **k: messages.append(m))
     node.get_logger = lambda: logger
     node.ask_vlm = lambda top, x, y: FrontierExplorer.ask_vlm(node, top, x, y)
+    node.log_vlm_decision = (
+        lambda *args: FrontierExplorer.log_vlm_decision(node, *args))
     # A view facing each direction from the origin.
     for yaw in (0.0, 1.5708, 3.1416, -1.5708):
         node.views.remember(0.0, 0.0, yaw, f'frame@{yaw}', time.monotonic())
@@ -84,6 +90,17 @@ def test_shadow_mode_logs_but_keeps_the_map_choice():
     node = explorer_stub('shadow', FakeClient(result=scored(0.1, 0.9)))
     assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) == POOL
     assert any('VLM differs' in m for m in node.messages)
+
+
+def test_shadow_mode_logs_the_decision_with_both_picks():
+    decisions = []
+    nav_log = SimpleNamespace(decision=lambda *args: decisions.append(args))
+    node = explorer_stub('shadow', FakeClient(result=scored(0.1, 0.9)), nav_log)
+    FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0)
+    (robot, candidates, map_pick, vlm_pick, mode, grid), = decisions
+    assert (map_pick, vlm_pick, mode) == (0, 1, 'shadow')   # map: east; VLM: north
+    assert [c['vlm_score'] for c in candidates] == [0.1, 0.9]
+    assert grid[3:5] == (2, 1)
 
 
 def test_active_mode_lets_the_vlm_change_the_pick():
