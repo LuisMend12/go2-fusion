@@ -65,7 +65,8 @@ def scored(east, north):
 def test_asks_with_the_view_toward_each_goal():
     client = FakeClient()
     node = explorer_stub('shadow', client)
-    assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) == POOL
+    # Shadow waits for the answer like active, so the choice is put off.
+    assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) is None
     goals, frames = client.asked[0]
     assert goals == [(3.0, 0.0), (0.0, 3.0)]
     assert frames == ['frame@0.0', 'frame@1.5708']
@@ -95,6 +96,16 @@ def test_active_mode_lets_the_vlm_change_the_pick():
 def test_active_mode_waits_then_falls_back():
     client = FakeClient(busy=True)
     node = explorer_stub('active', client)
+    assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) is None   # wait
+    node.vlm_wait_started -= 9.0   # longer than vlm_timeout
+    assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) == POOL
+
+
+def test_shadow_mode_waits_for_the_answer_like_active_then_falls_back():
+    # Without the wait, the answer came after the goal was chosen and was stale
+    # by the next choice, so shadow mode never compared anything.
+    client = FakeClient(busy=True)
+    node = explorer_stub('shadow', client)
     assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) is None   # wait
     node.vlm_wait_started -= 9.0   # longer than vlm_timeout
     assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) == POOL

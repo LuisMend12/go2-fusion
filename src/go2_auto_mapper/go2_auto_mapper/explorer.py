@@ -104,8 +104,9 @@ class FrontierExplorer(Node):
 
         # A vision-language model on a GPU server re-ranks the best goals
         # from the camera's view toward each (vlm_ranking.py). 'off': not
-        # used. 'shadow': asked, and its pick logged next to ours, but ours
-        # is used. 'active': its score is added to ours, worth vlm_weight
+        # used. 'shadow': asked (waiting up to vlm_timeout for the answer),
+        # and its pick logged next to ours, but ours is used. 'active': the
+        # same wait, then its score is added to ours, worth vlm_weight
         # cells from a sure no to a sure yes. vlm_url is an OpenAI-compatible
         # chat endpoint (vLLM, Ollama); VLM_API_KEY in the environment is
         # sent if the server needs one.
@@ -983,8 +984,9 @@ class FrontierExplorer(Node):
 
     def rank_with_vlm(self, pool, robot_x, robot_y):
         """The pool with the VLM's opinion added to the best few scores, the
-        pool unchanged if the VLM can't help now, or None (active mode
-        only) to wait one more loop for an answer that is on its way.
+        pool unchanged if the VLM can't help now, or None to wait one more
+        loop (up to vlm_timeout per goal choice) for an answer on its way.
+        Shadow mode waits the same way but then keeps the map's pick.
         """
 
         now = time.monotonic()
@@ -1018,7 +1020,11 @@ class FrontierExplorer(Node):
             # with each map update must not keep the robot waiting.
             if self.vlm_wait_started is None:
                 self.vlm_wait_started = now
-            if self.vlm_mode == 'active' and now - self.vlm_wait_started < self.vlm_timeout:
+            # Shadow mode waits too: otherwise the goal is chosen before the
+            # answer comes, and by the next choice (minutes later) the answer
+            # is stale, so shadow never compared anything. Waiting the same way
+            # also makes shadow a fair control for active: only steering differs.
+            if now - self.vlm_wait_started < self.vlm_timeout:
                 self.get_logger().info(
                     'Waiting for the VLM ranking...', throttle_duration_sec=5.0
                 )
