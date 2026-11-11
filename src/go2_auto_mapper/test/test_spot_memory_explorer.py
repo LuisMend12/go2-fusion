@@ -2,6 +2,7 @@
 
 from concurrent.futures import Future
 import math
+import time
 from types import MethodType, SimpleNamespace
 
 from go2_auto_mapper.explorer import FrontierExplorer
@@ -198,6 +199,41 @@ def test_failing_the_open_space_fallback_just_carries_on_exploring():
     node.record_goal_failure()
     assert not node.escape_pending
     assert any('carrying on exploring' in m for m in node.messages)
+
+
+def test_an_obstacle_on_a_long_trip_back_does_not_queue_another_escape():
+    node = explorer_stub()
+    node.spot_memory.remember(7.0, 7.0, clearance=1.0, stamp=2.0)
+    node.start_escape()
+    node.last_escape_time = time.monotonic() - 1000.0   # trip outlasted the cooldown
+    node.cancel_for_obstacle()
+    finish_goal(node, 5)
+    assert node.backup_pending and not node.escape_pending
+    assert node.spot_memory.spots == (Spot(7.0, 7.0, 1.0, 2.0),)
+
+
+def test_a_requested_scan_cancel_wins_over_a_late_obstacle_cancel():
+    node = explorer_stub()
+    node.spot_memory.remember(7.0, 7.0, clearance=1.0, stamp=2.0)
+    node.start_escape()
+    node.goal_cancelled_for_scan = True     # Scan button pressed first
+    node.cancel_for_obstacle()
+    finish_goal(node, 5)
+    assert node.spot_memory.strikes == {}   # paused for the scan, no strike
+    assert node.spot_memory.spots == (Spot(7.0, 7.0, 1.0, 2.0),)
+    assert node.blacklist == []
+
+
+def test_an_obstacle_cancel_nav2_never_answers_still_only_interrupts():
+    node = explorer_stub()
+    node.spot_memory.remember(7.0, 7.0, clearance=1.0, stamp=2.0)
+    node.start_escape()
+    node.cancel_for_obstacle()
+    node.goal_sent_time = -1000.0           # no result before the timeout
+    assert node.handle_stalled_goal()
+    assert node.spot_memory.spots == (Spot(7.0, 7.0, 1.0, 2.0),)
+    assert node.blacklist == [] and not node.escape_pending
+    assert not node.goal_active and not node.goal_cancelled_for_obstacle
 
 
 # ---- a trip back that times out, through the real exploration loop ----

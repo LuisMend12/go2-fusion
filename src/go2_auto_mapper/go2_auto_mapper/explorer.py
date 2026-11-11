@@ -1424,18 +1424,20 @@ class FrontierExplorer(Node):
                     self.verify_not_before = None
                 self.goal_frontier = None
 
+            elif self.goal_cancelled_for_scan:
+
+                # Interrupted for a requested scan: not the goal's fault. Checked
+                # first: once the scan cancel owns the goal, a later obstacle
+                # cancel of the same goal must not count as a strike.
+                self.get_logger().info('Goal paused for the requested scan.')
+                self.emit_goal_outcome('goal_cancelled', 'paused for requested scan')
+                self.log_goal_ended('paused')
+
             elif self.goal_cancelled_for_obstacle and self.goal_is_escape:
 
                 # Something came close on the way: not proof the spot is
                 # unreachable. Back up (already queued) and keep exploring.
                 self.record_escape_interrupted()
-
-            elif self.goal_cancelled_for_scan:
-
-                # Interrupted for a requested scan: not the goal's fault.
-                self.get_logger().info('Goal paused for the requested scan.')
-                self.emit_goal_outcome('goal_cancelled', 'paused for requested scan')
-                self.log_goal_ended('paused')
 
             else:
 
@@ -2320,7 +2322,10 @@ class FrontierExplorer(Node):
         self.current_goal_handle.cancel_goal_async()
         self.current_goal_handle = None
         self.backup_pending = True
-        self.request_escape('obstacle ahead')
+        # An interrupted escape only backs up: heading off on another escape
+        # right away would undo "interrupted, not failed".
+        if not self.goal_is_escape:
+            self.request_escape('obstacle ahead')
 
     def yield_for_people(self):
         """While driving to a goal, hold still when a person, their next
@@ -2560,10 +2565,15 @@ class FrontierExplorer(Node):
         # driving there while we start a turn, back-up or new goal.
         if self.current_goal_handle is not None:
             self.current_goal_handle.cancel_goal_async()
-        self.record_goal_failure()
+        if self.goal_cancelled_for_obstacle and self.goal_is_escape:
+            # The obstacle cancel was never answered: still an interruption.
+            self.record_escape_interrupted()
+        else:
+            self.record_goal_failure()
         self.current_goal_handle = None
         self.goal_active = False
         self.goal_sent_time = None
+        self.goal_cancelled_for_obstacle = False
         return True
 
     def _exploration_loop_impl(self):
