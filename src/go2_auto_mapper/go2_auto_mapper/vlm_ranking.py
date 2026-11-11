@@ -152,8 +152,11 @@ def vlm_shortlist(pool, count, include_longest=True):
     best = min(on_longest, key=lambda c: c[0])
     # Neighbouring frontiers can offer the same goal spot; asking twice
     # would spend an image and let match_score read the first one only.
-    if any(c[1:3] == best[1:3] for c in top):
-        return top
+    # Keep the spot once, labelled with the longest frontier it lies on
+    # (same spot, so the same map score).
+    for i, c in enumerate(top):
+        if c[1:3] == best[1:3]:
+            return top[:i] + [best] + top[i + 1:]
     return top + [best]
 
 

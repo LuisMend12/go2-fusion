@@ -354,8 +354,9 @@ def test_request_for_five_goals_asks_for_exactly_five_scores():
     assert parse_reply('{"scores": [0.1, 0.2, 0.3, 0.4, 0.9], "reason": "x"}', 5)[0][-1] == 0.9
 
 
-def test_shortlist_does_not_repeat_a_goal_spot_already_shown():
-    # A neighbouring frontier offers the same spot (1, 0) as the longest one.
-    pool = [(-500.0, 1.0, 0.0, 10), (-200.0, 1.0, 0.0, 60), (-100.0, 5.0, 0.0, 60)]
+def test_shortlist_shows_a_shared_spot_once_labelled_with_the_longest_frontier():
+    # A 10-cell and the 60-cell frontier both offer spot (1, 0), with the
+    # same map score (same spot); the longest frontier also offers (5, 0).
+    pool = [(-500.0, 1.0, 0.0, 10), (-500.0, 1.0, 0.0, 60), (-100.0, 5.0, 0.0, 60)]
     top = vlm_shortlist(pool, 1)
-    assert [c[1:3] for c in top] == [(1.0, 0.0)]
+    assert [c[1:4] for c in top] == [(1.0, 0.0, 60)]
