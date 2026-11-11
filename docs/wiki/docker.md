@@ -2,7 +2,7 @@
 title: Docker
 parent: lab-setup
 code: [docker/**, requirements.txt]
-verified: 772aa8d489d2
+verified: b3d3e30acd20
 ---
 
 # Docker
@@ -51,6 +51,11 @@ On Windows from PowerShell, add `-f docker-compose.windows.yml` after `docker co
 - `docker-compose.yml` - for Linux and WSL: shares your display (for RViz), gamepads (`/dev/input`) and the host network.
 - `docker-compose.windows.yml` - for Windows PowerShell: no display or gamepad, and publishes Foxglove on port 8765 (change with `FOXGLOVE_PORT`).
 - Both compose files pass `YOLO_URL` from your shell into the container (empty by default), so [object detection](object-detection.md) can ask a YOLO server on the GPU machine.
+- `docker-compose.ite.yml` - an override used by `scripts/run_ite_hallways.ps1`
+  after the Windows file. It reuses an installed simulator image without
+  pulling one. Project `go2ite` keeps its build volumes apart from lab and
+  other review work. See [ITE-inspired hallways](simulator.md#ite-inspired-hallways)
+  for validation, preview and user-run experiments.
 - `docker-compose.gpu.yml` + `Dockerfile.gpu` - optional, on top of the Windows file, for an NVIDIA GPU: YOLO runs on CUDA (unless `YOLO_URL` points at a YOLO server) and RViz draws on the GPU.
 - `mac/` - the Mac setup (see [Mac setup](mac-setup.md)).
 - `entrypoint.sh`, `dev_aliases.sh` - start-up build and the shortcuts above.
