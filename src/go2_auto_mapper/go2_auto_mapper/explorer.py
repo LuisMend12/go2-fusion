@@ -54,7 +54,12 @@ from go2_auto_mapper.obstacle_sensing import (
     straight_line_clear,
 )
 from go2_auto_mapper.open_space import OCCUPIED_THRESHOLD, find_open_space, has_clearance
-from go2_auto_mapper.spot_memory import SpotMemory, choose_spot, scan_clearance
+from go2_auto_mapper.spot_memory import (
+    SpotMemory,
+    choose_spot,
+    scan_clearance,
+    scan_covers_circle,
+)
 from go2_auto_mapper.frontier_scoring import (
     count_revealed_unknown,
     find_frontier_clusters,
@@ -438,6 +443,9 @@ class FrontierExplorer(Node):
         # /frontier_explorer/scan: a 360 degree scan on request (the RViz
         # AutoMapper panel's Scan button, or `ros2 service call`).
         self.goal_cancelled_for_scan = False
+        # Set when watch_ahead cancels the goal for an obstacle in front, so
+        # its result can tell "interrupted on the way" from "can't get there".
+        self.goal_cancelled_for_obstacle = False
         self.scan_service = self.create_service(
             Trigger, '~/scan', self.handle_scan_request
         )
@@ -1239,6 +1247,7 @@ class FrontierExplorer(Node):
 
         self.goal_active = True
         self.goal_is_escape = is_escape
+        self.goal_cancelled_for_obstacle = False
         self.goal_sequence += 1
         self.active_goal_sequence = self.goal_sequence
         sequence = self.active_goal_sequence
@@ -1415,6 +1424,12 @@ class FrontierExplorer(Node):
                     self.verify_not_before = None
                 self.goal_frontier = None
 
+            elif self.goal_cancelled_for_obstacle and self.goal_is_escape:
+
+                # Something came close on the way: not proof the spot is
+                # unreachable. Back up (already queued) and keep exploring.
+                self.record_escape_interrupted()
+
             elif self.goal_cancelled_for_scan:
 
                 # Interrupted for a requested scan: not the goal's fault.
@@ -1443,6 +1458,28 @@ class FrontierExplorer(Node):
         self.goal_active = False
         self.goal_sent_time = None
         self.goal_cancelled_for_scan = False
+        self.goal_cancelled_for_obstacle = False
+
+    def record_escape_interrupted(self):
+        """
+        Note an escape trip cut short by an obstacle in front.
+
+        The destination is neither blacklisted nor treated as unreachable. A
+        remembered spot gets a strike instead, and is forgotten after
+        OBSTACLE_STRIKES of them (spot_memory.py).
+        """
+        self.get_logger().warn(
+            'Trip to open space interrupted by an obstacle on the way; '
+            'not counting it against that spot.'
+        )
+        self.emit_goal_outcome('goal_cancelled', 'interrupted by obstacle ahead')
+        self.log_goal_ended('interrupted')
+        if self.escape_spot is not None and self.spot_memory.strike(self.escape_spot):
+            self.get_logger().info(
+                'Obstacles interrupted the trip to that remembered spot twice; '
+                'forgetting it.'
+            )
+        self.escape_spot = None
 
     # ==========================================================
     # SCAN ON REQUEST
@@ -2259,13 +2296,7 @@ class FrontierExplorer(Node):
                 f'Obstacle {gap:.2f} m ahead for {self.blocked_timeout:.1f} s; '
                 'abandoning this goal and heading somewhere open.'
             )
-            # The result callback then blacklists the goal and frees the loop.
-            # Dropping the handle stops the next ticks (before Nav2 confirms)
-            # from cancelling and asking to escape again.
-            self.current_goal_handle.cancel_goal_async()
-            self.current_goal_handle = None
-            self.backup_pending = True
-            self.request_escape('obstacle ahead')
+            self.cancel_for_obstacle()
 
         except Exception as e:
             # Same reason as exploration_loop: never let a callback error
@@ -2275,6 +2306,21 @@ class FrontierExplorer(Node):
                 self._stop_for(f'obstacle watch error: {e}')
             else:
                 self.get_logger().error(f'Obstacle watch error: {e}')
+
+    def cancel_for_obstacle(self):
+        """
+        Cancel the current goal because something stayed close in front.
+
+        The result callback then frees the loop: an exploration goal is
+        blacklisted as before, an escape trip only counts as interrupted
+        (record_escape_interrupted). Dropping the handle stops the next ticks
+        (before Nav2 confirms) from cancelling and asking to escape again.
+        """
+        self.goal_cancelled_for_obstacle = True
+        self.current_goal_handle.cancel_goal_async()
+        self.current_goal_handle = None
+        self.backup_pending = True
+        self.request_escape('obstacle ahead')
 
     def yield_for_people(self):
         """While driving to a goal, hold still when a person, their next
@@ -2383,6 +2429,15 @@ class FrontierExplorer(Node):
         scan = self.latest_scan
         if position is None or scan is None:
             return
+        # Only a full turn with a fresh scan that looks all the way around
+        # proves the room; an old or patchy scan could miss a close wall.
+        age = self._scan_age()
+        if (
+            self.scan_yaw < 0.95 * 2.0 * math.pi
+            or age is None or age > SCAN_MAX_AGE_SEC
+            or not scan_covers_circle(scan.angle_min, scan.angle_increment, scan.ranges)
+        ):
+            return
         clearance = scan_clearance(scan.ranges, scan.range_min, scan.range_max)
         if self.spot_memory.remember(*position, clearance, time.monotonic()):
             self.get_logger().info(
@@ -2483,6 +2538,34 @@ class FrontierExplorer(Node):
             # tries again.
             self.get_logger().error(f'Exploration loop error: {e}')
 
+    def handle_stalled_goal(self):
+        """
+        Give up on a goal Nav2 never reported a result for; True if it did.
+
+        If a goal was accepted but Nav2 never reported a result (e.g. the
+        action server dropped the connection post-acceptance), neither
+        done-callback will ever fire, so exploration would stall forever.
+        """
+        if not (
+            self.goal_active
+            and self.goal_sent_time is not None
+            and time.monotonic() - self.goal_sent_time > self.goal_timeout_sec
+        ):
+            return False
+        self.get_logger().warn(
+            'No Nav2 result after '
+            f'{self.goal_timeout_sec:.0f}s, treating goal as stalled.'
+        )
+        # Cancel it in Nav2 too: just forgetting it would leave Nav2
+        # driving there while we start a turn, back-up or new goal.
+        if self.current_goal_handle is not None:
+            self.current_goal_handle.cancel_goal_async()
+        self.record_goal_failure()
+        self.current_goal_handle = None
+        self.goal_active = False
+        self.goal_sent_time = None
+        return True
+
     def _exploration_loop_impl(self):
 
         if self.recovery_move is not None or self.recovery_fault:
@@ -2552,27 +2635,11 @@ class FrontierExplorer(Node):
             )
             return
 
-        # If a goal was accepted but Nav2 never reported a result (e.g. the
-        # action server dropped the connection post-acceptance), neither
-        # done-callback will ever fire. Force a reset so exploration doesn't
-        # stall forever.
-        if (
-            self.goal_active
-            and self.goal_sent_time is not None
-            and time.monotonic() - self.goal_sent_time > self.goal_timeout_sec
-        ):
-            self.get_logger().warn(
-                'No Nav2 result after '
-                f'{self.goal_timeout_sec:.0f}s, treating goal as stalled.'
-            )
-            # Cancel it in Nav2 too: just forgetting it would leave Nav2
-            # driving there while we start a turn, back-up or new goal.
-            if self.current_goal_handle is not None:
-                self.current_goal_handle.cancel_goal_async()
-            self.record_goal_failure()
-            self.current_goal_handle = None
-            self.goal_active = False
-            self.goal_sent_time = None
+        # A goal Nav2 never answered: reset so exploration doesn't stall.
+        if self.handle_stalled_goal():
+            # Stop this tick: the next one runs whatever the failure queued
+            # (back-up, escape fallback, scan) before picking a frontier.
+            return
 
         # Don't issue multiple goals simultaneously.
         if self.goal_active:

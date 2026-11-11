@@ -19,6 +19,13 @@ Spot = namedtuple('Spot', 'x y clearance stamp')
 # A scan this close to the last remembered spot replaces it, so turning
 # twice in one place doesn't fill the memory with copies.
 SAME_SPOT_M = 0.5
+# Trips back to a spot that an obstacle ahead may interrupt before the spot
+# is forgotten. One bump on the way says nothing about the spot itself.
+OBSTACLE_STRIKES = 2
+# A scan counts as all around if it spans this much of a full turn and at
+# least this share of its readings are not NaN (inf means nothing in range).
+FULL_TURN_SHARE = 0.95
+VALID_READING_SHARE = 0.9
 
 
 def scan_clearance(ranges, range_min, range_max):
@@ -32,6 +39,23 @@ def scan_clearance(ranges, range_min, range_max):
     return min(valid) if valid else None
 
 
+def scan_covers_circle(angle_min, angle_increment, ranges):
+    """
+    Check a scan looks all the way around, with few missing readings.
+
+    `angle_min` is kept for the LaserScan field order; only the span
+    (readings x increment) and the share of non-NaN readings matter.
+    """
+    if not ranges:
+        return False
+    span = abs(angle_increment) * len(ranges)
+    readings = sum(1 for r in ranges if not math.isnan(r))
+    return (
+        span >= FULL_TURN_SHARE * 2.0 * math.pi
+        and readings >= VALID_READING_SHARE * len(ranges)
+    )
+
+
 class SpotMemory:
     """The last `size` open spots, oldest first."""
 
@@ -39,6 +63,7 @@ class SpotMemory:
         self.size = max(1, int(size))
         self.min_clearance = min_clearance
         self.spots = ()
+        self.strikes = {}
 
     def remember(self, x, y, clearance, stamp):
         """Add the spot if it had enough room; True if it was added."""
@@ -48,11 +73,27 @@ class SpotMemory:
         if spots and math.hypot(spots[-1].x - x, spots[-1].y - y) < SAME_SPOT_M:
             spots = spots[:-1]
         self.spots = (spots + (Spot(x, y, clearance, stamp),))[-self.size:]
+        self.strikes = {s: n for s, n in self.strikes.items() if s in self.spots}
         return True
 
     def forget(self, spot):
         """Drop a spot that turned out to be unreachable."""
         self.spots = tuple(s for s in self.spots if s != spot)
+        self.strikes = {s: n for s, n in self.strikes.items() if s != spot}
+
+    def strike(self, spot):
+        """
+        Count an obstacle interrupting a trip back to `spot`.
+
+        Returns True if that was strike OBSTACLE_STRIKES and the spot is now
+        forgotten.
+        """
+        count = self.strikes.get(spot, 0) + 1
+        if count >= OBSTACLE_STRIKES:
+            self.forget(spot)
+            return True
+        self.strikes = {**self.strikes, spot: count}
+        return False
 
 
 def choose_spot(spots, position, min_move, usable):
