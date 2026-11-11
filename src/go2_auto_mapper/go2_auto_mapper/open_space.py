@@ -78,6 +78,34 @@ def find_open_space(data, width, height, start, clearance, max_radius,
     return best
 
 
+def walking_distances(data, width, height, start, max_steps):
+    """
+    Return the steps to walk from `start` to each known-free cell nearby.
+
+    A breadth-first walk through known-free cells only (8-connected, like
+    find_open_space), so walls and unknown space are walked around, never
+    through. Stops at `max_steps`. `start` itself is always included, even
+    if it isn't free (the robot may be standing in an inflated spot).
+    Returns {(x, y): steps}.
+    """
+    steps = {start: 0}
+    queue = deque([start])
+    while queue:
+        x, y = queue.popleft()
+        here = steps[(x, y)]
+        if here >= max_steps:
+            continue
+        for dx, dy in NEIGHBORS_8:
+            nx, ny = x + dx, y + dy
+            if (nx, ny) in steps or not (0 <= nx < width and 0 <= ny < height):
+                continue
+            if not is_free(data[ny * width + nx]):
+                continue
+            steps[(nx, ny)] = here + 1
+            queue.append((nx, ny))
+    return steps
+
+
 def has_clearance(data, width, height, cell, clearance):
     """
     Check that `cell` is at least `clearance` steps from any non-free cell.

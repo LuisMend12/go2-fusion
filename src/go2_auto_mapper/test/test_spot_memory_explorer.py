@@ -16,7 +16,8 @@ SIZE = 100
 
 # The explorer methods these tests run for real; Nav2 and the map are faked.
 REAL_METHODS = (
-    'start_escape', 'spot_still_open', 'request_escape', 'record_goal_failure',
+    'start_escape', 'closest_remembered_spot', 'spot_still_open', 'request_escape',
+    'record_goal_failure',
     'record_escape_interrupted', 'navigation_result_callback',
     '_is_current_navigation_goal', 'remember_scan_spot', 'cancel_for_obstacle',
     'handle_stalled_goal', '_exploration_loop_impl',
@@ -95,7 +96,7 @@ def scan(ranges):
 
 # ---- choosing where to escape to ----
 
-def test_escape_goes_back_to_the_last_scanned_spot_first():
+def test_escape_goes_to_the_closest_remembered_spot_first():
     node = explorer_stub()
     node.spot_memory.remember(2.0, 2.0, clearance=1.0, stamp=1.0)
     node.spot_memory.remember(7.0, 7.0, clearance=1.0, stamp=2.0)
@@ -127,6 +128,34 @@ def test_escape_without_memory_uses_the_nearest_open_space():
     node.start_escape()
     assert node.escape_spot is None
     assert node.goals and node.goals[0][:2] != (7.0, 7.0)
+
+
+def test_escape_prefers_the_closest_spot_over_the_most_recent():
+    node = explorer_stub()
+    node.spot_memory.remember(6.0, 5.0, clearance=1.0, stamp=1.0)   # 1 m away, older
+    node.spot_memory.remember(9.0, 9.0, clearance=1.0, stamp=2.0)   # 4 m away, newest
+    node.start_escape()
+    assert node.goals == [(6.0, 5.0, True)]
+
+
+def test_escape_measures_closest_by_walking_around_walls():
+    node = explorer_stub()
+    for y in range(0, 95):                  # a wall at x = 5.5 m, open only near the top
+        node.map.data[y * SIZE + 55] = 100
+    node.spot_memory.remember(7.0, 5.0, clearance=1.0, stamp=2.0)   # 2 m away, behind the wall
+    node.spot_memory.remember(2.0, 5.0, clearance=1.0, stamp=1.0)   # 3 m away, same side
+    node.start_escape()
+    assert node.goals == [(2.0, 5.0, True)]
+
+
+def test_escape_ignores_remembered_spots_it_cannot_walk_to():
+    node = explorer_stub()
+    for y in range(SIZE):                   # a wall cutting the map in two
+        node.map.data[y * SIZE + 55] = 100
+    node.spot_memory.remember(7.0, 5.0, clearance=1.0, stamp=2.0)
+    node.start_escape()
+    assert node.escape_spot is None
+    assert node.goals and node.goals[0][:2] != (7.0, 5.0)   # nearest open space instead
 
 
 # ---- how a trip back ends, through the real Nav2 result handler ----

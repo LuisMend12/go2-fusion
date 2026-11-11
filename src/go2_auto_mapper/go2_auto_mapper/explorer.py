@@ -53,10 +53,15 @@ from go2_auto_mapper.obstacle_sensing import (
     free_distance_ahead,
     straight_line_clear,
 )
-from go2_auto_mapper.open_space import OCCUPIED_THRESHOLD, find_open_space, has_clearance
+from go2_auto_mapper.open_space import (
+    OCCUPIED_THRESHOLD,
+    find_open_space,
+    has_clearance,
+    walking_distances,
+)
 from go2_auto_mapper.spot_memory import (
     SpotMemory,
-    choose_spot,
+    choose_closest_spot,
     scan_clearance,
     scan_covers_circle,
 )
@@ -2467,6 +2472,29 @@ class FrontierExplorer(Node):
             and not self.is_goal_blacklisted(spot.x, spot.y)
         )
 
+    def closest_remembered_spot(self, start):
+        """
+        Return (spot, walk in m) for the closest usable remembered spot.
+
+        Closest means the shortest walk through known-free map cells from
+        `start` (a grid cell), up to SPOT_WALK_MAX_M; (None, None) if none.
+        """
+        resolution = self.map.info.resolution
+        steps = walking_distances(
+            self.map.data, self.map.info.width, self.map.info.height, start,
+            int(SPOT_WALK_MAX_M / resolution),
+        )
+
+        def walk(spot):
+            cell = tuple(int(math.floor(v)) for v in self.world_to_grid(spot.x, spot.y))
+            n = steps.get(cell)
+            return None if n is None else n * resolution
+
+        spot = choose_closest_spot(
+            self.spot_memory.spots, walk, OPEN_SPACE_MIN_MOVE_M, self.spot_still_open
+        )
+        return (None, None) if spot is None else (spot, walk(spot))
+
     def start_escape(self):
         """
         Send a goal to a spot with room, to get unstuck.
@@ -2485,23 +2513,22 @@ class FrontierExplorer(Node):
             self.get_logger().warn('Escape skipped: no map or position yet.')
             return
 
+        resolution = self.map.info.resolution
+        start = tuple(int(math.floor(v)) for v in self.world_to_grid(*position))
+
         if self.use_spot_memory and not skip_memory:
-            spot = choose_spot(
-                self.spot_memory.spots, position, OPEN_SPACE_MIN_MOVE_M,
-                self.spot_still_open,
-            )
+            spot, walk = self.closest_remembered_spot(start)
             if spot is not None:
                 self.get_logger().info(
-                    f'Going back to the last open spot it scanned from: '
-                    f'x={spot.x:.2f}, y={spot.y:.2f} ({spot.clearance:.2f} m of room).'
+                    f'Going back to the closest open spot it scanned from: '
+                    f'x={spot.x:.2f}, y={spot.y:.2f} ({walk:.1f} m walk, '
+                    f'{spot.clearance:.2f} m of room).'
                 )
                 self.escape_spot = spot
                 if self.send_goal(spot.x, spot.y, is_escape=True):
                     return
                 self.escape_spot = None
 
-        resolution = self.map.info.resolution
-        start = tuple(int(math.floor(v)) for v in self.world_to_grid(*position))
         found = find_open_space(
             self.map.data,
             self.map.info.width,
@@ -2924,6 +2951,8 @@ FORWARD_MOTION_MPS = 0.03
 # can't immediately trigger another one.
 OPEN_SPACE_SEARCH_RADIUS_M = 4.0
 OPEN_SPACE_MIN_MOVE_M = 0.5
+# Remembered spots farther than this walk are not considered when stuck.
+SPOT_WALK_MAX_M = 8.0
 ESCAPE_COOLDOWN_SEC = 30.0
 
 # "No usable goal" this many loops in a row counts as stuck.

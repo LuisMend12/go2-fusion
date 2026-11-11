@@ -96,17 +96,19 @@ class SpotMemory:
         return False
 
 
-def choose_spot(spots, position, min_move, usable):
+def choose_closest_spot(spots, walk_distance, min_move, usable):
     """
-    Return the most recent spot worth going back to, or None.
+    Return the remembered spot with the shortest walk, or None.
 
-    It must be at least `min_move` m from `position`, and `usable(spot)`
-    must accept it.
+    `walk_distance(spot)` is the walk there in meters, or None if it can't
+    be walked to. Spots under `min_move` m away and ones `usable(spot)`
+    rejects are skipped. Equal walks go to the most recent spot.
     """
-    px, py = position
-    for spot in reversed(spots):
-        if math.hypot(spot.x - px, spot.y - py) < min_move:
+    best = None
+    for order, spot in enumerate(spots):
+        walk = walk_distance(spot)
+        if walk is None or walk < min_move or not usable(spot):
             continue
-        if usable(spot):
-            return spot
-    return None
+        if best is None or (walk, -order) < best[0]:
+            best = ((walk, -order), spot)
+    return None if best is None else best[1]

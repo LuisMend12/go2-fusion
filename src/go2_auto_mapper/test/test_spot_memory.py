@@ -1,10 +1,10 @@
 import math
 
-from go2_auto_mapper.open_space import has_clearance
+from go2_auto_mapper.open_space import has_clearance, walking_distances
 from go2_auto_mapper.spot_memory import (
     Spot,
     SpotMemory,
-    choose_spot,
+    choose_closest_spot,
     scan_clearance,
     scan_covers_circle,
 )
@@ -47,24 +47,6 @@ def test_forget_drops_the_spot():
     memory.remember(5.0, 1.0, clearance=1.0, stamp=2.0)
     memory.forget(Spot(5.0, 1.0, 1.0, 2.0))
     assert [s.x for s in memory.spots] == [1.0]
-
-
-def test_choose_spot_takes_the_most_recent_usable_one():
-    spots = (Spot(1.0, 0.0, 1.0, 1.0), Spot(3.0, 0.0, 1.0, 2.0), Spot(5.0, 0.0, 1.0, 3.0))
-    chosen = choose_spot(spots, (0.0, 0.0), min_move=0.5, usable=lambda s: s.x != 5.0)
-    assert chosen == Spot(3.0, 0.0, 1.0, 2.0)
-
-
-def test_choose_spot_skips_the_spot_the_robot_is_standing_on():
-    spots = (Spot(1.0, 0.0, 1.0, 1.0), Spot(0.2, 0.0, 1.0, 2.0))
-    chosen = choose_spot(spots, (0.0, 0.0), min_move=0.5, usable=lambda s: True)
-    assert chosen == Spot(1.0, 0.0, 1.0, 1.0)
-
-
-def test_choose_spot_returns_none_when_nothing_is_usable():
-    spots = (Spot(1.0, 0.0, 1.0, 1.0),)
-    assert choose_spot(spots, (0.0, 0.0), 0.5, usable=lambda s: False) is None
-    assert choose_spot((), (0.0, 0.0), 0.5, usable=lambda s: True) is None
 
 
 def grid(width, height, walls=()):
@@ -130,3 +112,44 @@ def test_a_half_circle_scan_does_not_count():
 def test_a_full_circle_scan_with_many_gaps_does_not_count():
     ranges = [2.0] * 180 + [math.nan] * 180
     assert not scan_covers_circle(**full_circle_scan(ranges))
+
+
+def test_choose_closest_spot_takes_the_shortest_walk():
+    spots = (Spot(1.0, 0.0, 1.0, 1.0), Spot(3.0, 0.0, 1.0, 2.0), Spot(5.0, 0.0, 1.0, 3.0))
+    walk = {1.0: 4.0, 3.0: 2.0, 5.0: 6.0}
+    chosen = choose_closest_spot(spots, lambda s: walk[s.x], 0.5, usable=lambda s: True)
+    assert chosen.x == 3.0
+
+
+def test_choose_closest_spot_skips_unreachable_too_near_and_unusable():
+    spots = (Spot(1.0, 0.0, 1.0, 1.0), Spot(3.0, 0.0, 1.0, 2.0),
+             Spot(5.0, 0.0, 1.0, 3.0), Spot(7.0, 0.0, 1.0, 4.0))
+    walk = {1.0: None, 3.0: 0.2, 5.0: 1.0, 7.0: 2.0}
+    chosen = choose_closest_spot(spots, lambda s: walk[s.x], 0.5, usable=lambda s: s.x != 5.0)
+    assert chosen.x == 7.0
+    assert choose_closest_spot(spots, lambda s: None, 0.5, usable=lambda s: True) is None
+
+
+def test_choose_closest_spot_breaks_ties_with_the_most_recent():
+    spots = (Spot(1.0, 0.0, 1.0, 1.0), Spot(-1.0, 0.0, 1.0, 2.0))
+    chosen = choose_closest_spot(spots, lambda s: 1.0, 0.5, usable=lambda s: True)
+    assert chosen.x == -1.0
+
+
+def test_walking_distance_goes_around_a_wall():
+    # A wall at x = 10 from y = 0 to 15 on a 20 x 20 map: (12, 2) is 4 steps
+    # away in a straight line from (8, 2), but the walk goes round at y = 16.
+    data = grid(20, 20, walls=[(10, y) for y in range(16)])
+    steps = walking_distances(data, 20, 20, (8, 2), max_steps=40)
+    assert steps[(12, 2)] > 4
+    assert steps[(8, 2)] == 0
+    assert (10, 5) not in steps                 # walls are never walked through
+
+
+def test_walking_distance_stops_at_max_steps_and_unknown_space():
+    data = grid(20, 20)
+    data[2 * 20 + 5] = -1
+    steps = walking_distances(data, 20, 20, (2, 2), max_steps=3)
+    assert (5, 2) not in steps                  # unknown
+    assert (6, 2) not in steps                  # farther than 3 steps
+    assert steps[(4, 4)] == 2
