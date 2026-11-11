@@ -41,7 +41,7 @@ def explorer_stub(mode, client, nav_log=None):
         data=[-1, 0])
     node = SimpleNamespace(
         vlm_mode=mode, vlm_client=client, vlm_weight=400.0, vlm_timeout=8.0,
-        vlm_candidates=4, vlm_ranking=None, vlm_wait_started=None,
+        vlm_candidates=4, vlm_include_longest=True, vlm_ranking=None, vlm_wait_started=None,
         vlm_retry_after=0.0, views=ViewMemory(bins=8), messages=messages,
         info_gain_cells_per_meter=100.0, nav_log=nav_log, map=grid,
     )
@@ -170,3 +170,39 @@ def test_no_views_means_map_score_alone():
     node.views = ViewMemory(bins=8)
     assert FrontierExplorer.rank_with_vlm(node, POOL, 0.0, 0.0) == POOL
     assert client.asked == []
+
+
+# Five goals: the best four by map score are on short frontiers; the fifth,
+# worst by map score, is on by far the longest frontier (60 cells).
+LONG_POOL = [(-500.0, 3.0, 0.0, 10, True, True, False, 10.0, []),
+             (-480.0, 0.0, 3.0, 10, True, True, False, 10.0, []),
+             (-460.0, -3.0, 0.0, 10, True, True, False, 10.0, []),
+             (-440.0, 0.0, -3.0, 10, True, True, False, 10.0, []),
+             (-300.0, 2.0, 2.0, 60, True, True, False, 10.0, [])]
+
+
+def test_vlm_is_also_asked_about_the_longest_frontier():
+    client = FakeClient()
+    FrontierExplorer.rank_with_vlm(explorer_stub('active', client), LONG_POOL, 0.0, 0.0)
+    goals, _ = client.asked[0]
+    assert goals[-1] == (2.0, 2.0)
+    assert len(goals) == 5
+    assert 'longest' in client.facts[-1]
+    assert '3.0 m long' in client.facts[-1]
+
+
+def test_active_vlm_can_send_the_robot_to_the_longest_frontier():
+    goals = [(c[1], c[2]) for c in LONG_POOL]
+    ranking = Ranking(goals, [0.1, 0.1, 0.1, 0.1, 1.0], 'open hallway', time.monotonic())
+    node = explorer_stub('active', FakeClient(result=ranking))
+    ranked = FrontierExplorer.rank_with_vlm(node, LONG_POOL, 0.0, 0.0)
+    assert min(ranked, key=lambda c: c[0])[1:3] == (2.0, 2.0)
+
+
+def test_longest_frontier_left_out_when_turned_off():
+    client = FakeClient()
+    node = explorer_stub('active', client)
+    node.vlm_include_longest = False
+    FrontierExplorer.rank_with_vlm(node, LONG_POOL, 0.0, 0.0)
+    goals, _ = client.asked[0]
+    assert (2.0, 2.0) not in goals

@@ -19,6 +19,8 @@ from go2_auto_mapper.vlm_ranking import (
     suggestion_message,
     usable_heading,
     build_request,
+    frontier_fact,
+    vlm_shortlist,
     heading_bin,
     match_score,
     merge_scores,
@@ -265,3 +267,49 @@ def test_vlm_mode_off_from_the_command_line_is_read_as_off():
     assert vlm_mode_name(' Active ') == 'active'
     assert vlm_mode_name('shadow') == 'shadow'
     assert vlm_mode_name(True) == 'true'   # not a mode: setup_vlm warns and stays off
+
+
+# (score, x, y, frontier cells, ...): lower score is better.
+SHORTLIST_POOL = [
+    (-500.0, 1.0, 0.0, 10),
+    (-400.0, 2.0, 0.0, 12),
+    (-300.0, 3.0, 0.0, 8),
+    (-200.0, 4.0, 0.0, 60),
+    (-100.0, 5.0, 0.0, 60),
+]
+
+
+def test_shortlist_adds_the_longest_frontier_when_the_best_miss_it():
+    top = vlm_shortlist(SHORTLIST_POOL, 2)
+    assert [c[1] for c in top] == [1.0, 2.0, 4.0]
+
+
+def test_shortlist_takes_the_best_scored_spot_on_the_longest_frontier():
+    top = vlm_shortlist(SHORTLIST_POOL, 1)
+    assert top[-1][1] == 4.0
+
+
+def test_shortlist_unchanged_when_a_best_goal_is_already_on_the_longest():
+    top = vlm_shortlist(SHORTLIST_POOL, 4)
+    assert [c[1] for c in top] == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_shortlist_without_the_longest_is_just_the_best():
+    top = vlm_shortlist(SHORTLIST_POOL, 2, include_longest=False)
+    assert [c[1] for c in top] == [1.0, 2.0]
+
+
+def test_shortlist_of_an_empty_pool_is_empty():
+    assert vlm_shortlist([], 4) == []
+
+
+def test_frontier_fact_gives_distance_unknown_cells_and_length():
+    fact = frontier_fact(10.0, 1500, 3.0, longest=False)
+    assert '10.0 m away' in fact
+    assert '1500 unknown cells' in fact
+    assert '3.0 m long' in fact
+    assert 'longest' not in fact
+
+
+def test_frontier_fact_marks_the_longest_frontier():
+    assert 'longest' in frontier_fact(10.0, 1500, 3.0, longest=True)

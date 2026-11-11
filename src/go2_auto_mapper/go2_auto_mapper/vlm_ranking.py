@@ -132,6 +132,38 @@ class ViewMemory:
         return None if best is None else best[1]
 
 
+def vlm_shortlist(pool, count, include_longest=True):
+    """
+    Return the goals to ask the VLM about: the best `count` by map score.
+
+    Candidates are (score, x, y, frontier cells, ...), lower score better.
+    With `include_longest`, the best-scored spot on the longest frontier is
+    added when none of the best is on a frontier that long, so the VLM can
+    weigh a long frontier the reveal score ranks lower. Every candidate in
+    the pool already passed the explorer's safety and reachability checks.
+    """
+    top = sorted(pool, key=lambda c: c[0])[:count]
+    if not include_longest or not top:
+        return top
+    longest_cells = max(c[3] for c in pool)
+    if max(c[3] for c in top) >= longest_cells:
+        return top
+    on_longest = [c for c in pool if c[3] == longest_cells]
+    return top + [min(on_longest, key=lambda c: c[0])]
+
+
+def frontier_fact(distance_m, unknown_cells, length_m, longest):
+    """One line for the prompt: what the map says about a goal's area."""
+    fact = (
+        f'The map says it is {distance_m:.1f} m away and could show about '
+        f'{unknown_cells} unknown cells, along an unexplored edge about '
+        f'{length_m:.1f} m long'
+    )
+    if longest:
+        fact += ', the longest unexplored edge on the map'
+    return fact + '.'
+
+
 def build_request(model, jpegs, facts=None):
     """
     Chat-completions payload asking the model to score each image.
