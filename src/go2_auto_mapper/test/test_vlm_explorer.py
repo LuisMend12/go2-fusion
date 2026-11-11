@@ -206,3 +206,27 @@ def test_longest_frontier_left_out_when_turned_off():
     FrontierExplorer.rank_with_vlm(node, LONG_POOL, 0.0, 0.0)
     goals, _ = client.asked[0]
     assert (2.0, 2.0) not in goals
+
+
+def test_longest_frontier_goes_through_ask_reply_pick_and_decision_log():
+    decisions = []
+    nav_log = SimpleNamespace(decision=lambda *args: decisions.append(args))
+    client = FakeClient()
+    node = explorer_stub('active', client, nav_log)
+    # A camera view facing the fifth goal, north-east of the robot.
+    node.views.remember(0.0, 0.0, 0.7854, 'frame@0.7854', time.monotonic())
+
+    assert FrontierExplorer.rank_with_vlm(node, LONG_POOL, 0.0, 0.0) is None   # asked
+    goals, frames = client.asked[0]
+    assert frames[-1] == 'frame@0.7854'
+    assert len(frames) == len(goals) == 5
+
+    client.result = Ranking(goals, [0.1, 0.1, 0.1, 0.1, 1.0], 'open hallway',
+                            time.monotonic())
+    ranked = FrontierExplorer.rank_with_vlm(node, LONG_POOL, 0.0, 0.0)
+    assert min(ranked, key=lambda c: c[0])[1:3] == (2.0, 2.0)
+    assert any('VLM differs' in m for m in node.messages)
+
+    (_, candidates, map_pick, vlm_pick, mode, _), = decisions
+    assert (map_pick, vlm_pick, mode) == (0, 4, 'active')
+    assert [c['vlm_score'] for c in candidates] == [0.1, 0.1, 0.1, 0.1, 1.0]

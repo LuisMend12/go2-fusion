@@ -160,7 +160,9 @@ def frontier_fact(distance_m, unknown_cells, length_m, longest):
         f'{length_m:.1f} m long'
     )
     if longest:
-        fact += ', the longest unexplored edge on the map'
+        # Longest among the goals offered now: edges a visit didn't shrink,
+        # blacklisted spots and worse safety tiers are already left out.
+        fact += ', the longest unexplored edge the robot can head for now'
     return fact + '.'
 
 

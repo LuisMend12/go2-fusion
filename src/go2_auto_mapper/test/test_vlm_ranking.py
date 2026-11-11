@@ -313,3 +313,42 @@ def test_frontier_fact_gives_distance_unknown_cells_and_length():
 
 def test_frontier_fact_marks_the_longest_frontier():
     assert 'longest' in frontier_fact(10.0, 1500, 3.0, longest=True)
+
+
+def test_shortlist_picks_the_best_spot_on_the_longest_frontier_in_any_order():
+    # Shuffled: the worse-scored spot on the longest frontier comes first.
+    pool = [
+        (-100.0, 5.0, 0.0, 60),
+        (-300.0, 3.0, 0.0, 8),
+        (-500.0, 1.0, 0.0, 10),
+        (-200.0, 4.0, 0.0, 60),
+        (-400.0, 2.0, 0.0, 12),
+    ]
+    top = vlm_shortlist(pool, 2)
+    assert [c[1] for c in top] == [1.0, 2.0, 4.0]
+
+
+def test_shortlist_adds_one_spot_when_two_frontiers_tie_for_longest():
+    pool = [
+        (-500.0, 1.0, 0.0, 10),
+        (-150.0, 6.0, 0.0, 60),
+        (-250.0, 4.0, 0.0, 60),
+    ]
+    top = vlm_shortlist(pool, 1)
+    assert [c[1] for c in top] == [1.0, 4.0]
+
+
+def test_shortlist_keeps_score_ties_and_adds_nothing_when_all_are_as_long():
+    pool = [(-300.0, 1.0, 0.0, 20), (-300.0, 2.0, 0.0, 20), (-100.0, 3.0, 0.0, 20)]
+    top = vlm_shortlist(pool, 2)
+    assert [c[1] for c in top] == [1.0, 2.0]
+
+
+def test_request_for_five_goals_asks_for_exactly_five_scores():
+    facts = [frontier_fact(5.0, 100, 1.0, longest=(i == 4)) for i in range(5)]
+    request = build_request('m', [b'jpeg'] * 5, facts)
+    content = request['messages'][0]['content']
+    assert 'exactly 5 scores' in content[0]['text']
+    assert sum(1 for part in content if part['type'] == 'image_url') == 5
+    assert 'longest' in content[-2]['text']
+    assert parse_reply('{"scores": [0.1, 0.2, 0.3, 0.4, 0.9], "reason": "x"}', 5)[0][-1] == 0.9
