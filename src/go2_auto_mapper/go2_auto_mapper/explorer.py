@@ -53,7 +53,8 @@ from go2_auto_mapper.obstacle_sensing import (
     free_distance_ahead,
     straight_line_clear,
 )
-from go2_auto_mapper.open_space import OCCUPIED_THRESHOLD, find_open_space
+from go2_auto_mapper.open_space import OCCUPIED_THRESHOLD, find_open_space, has_clearance
+from go2_auto_mapper.spot_memory import SpotMemory, choose_spot, scan_clearance
 from go2_auto_mapper.frontier_scoring import (
     count_revealed_unknown,
     find_frontier_clusters,
@@ -155,6 +156,11 @@ class FrontierExplorer(Node):
         # side, scan there, then carry on exploring.
         self.declare_parameter('open_space_clearance', 0.8)
         self.declare_parameter('stuck_failure_count', 3)
+        # Before that, go back to the last spot it finished a 360 degree scan
+        # at with open_space_clearance of lidar room, if the map still shows
+        # it open (spot_memory.py). Remembers the last spot_memory_size.
+        self.declare_parameter('use_spot_memory', True)
+        self.declare_parameter('spot_memory_size', 10)
 
         # People from object_detection's /people (ideas from SocialNav):
         # don't pick goals in someone's personal space, across where they
@@ -206,6 +212,10 @@ class FrontierExplorer(Node):
         self.open_space_clearance = self.get_parameter(
             'open_space_clearance'
         ).value
+        self.use_spot_memory = bool(self.get_parameter('use_spot_memory').value)
+        self.spot_memory = SpotMemory(
+            self.get_parameter('spot_memory_size').value, self.open_space_clearance
+        )
         self.stuck_failure_count = self.get_parameter(
             'stuck_failure_count'
         ).value
@@ -399,6 +409,10 @@ class FrontierExplorer(Node):
         self.escape_pending = False
         self.goal_is_escape = False
         self.last_escape_time = None
+        # The remembered spot the current escape goal heads for, and whether
+        # the next escape must skip the memory (that spot just failed).
+        self.escape_spot = None
+        self.escape_skip_memory = False
 
         self.exploration_complete_logged = False
 
@@ -1332,6 +1346,19 @@ class FrontierExplorer(Node):
         # Never reached, so there's no visit to judge the frontier by.
         self.goal_frontier = None
 
+        if self.goal_is_escape and self.escape_spot is not None:
+            # The remembered spot can't be reached now: forget it and try
+            # the nearest open space on the map instead, once.
+            self.spot_memory.forget(self.escape_spot)
+            self.escape_spot = None
+            self.get_logger().warn(
+                'Could not reach the remembered open spot; trying the '
+                'nearest open space instead.'
+            )
+            self.escape_skip_memory = True
+            self.escape_pending = True
+            return
+
         if self.goal_is_escape:
             # Don't escape from a failed escape (request_escape's cooldown
             # also guards this); just go back to exploring.
@@ -1375,6 +1402,7 @@ class FrontierExplorer(Node):
                 self.emit_goal_outcome('goal_reached', 'Nav2 reached goal')
                 if self.goal_is_escape:
                     self.emit_event('recovery_finished', 'reached open space')
+                    self.escape_spot = None
                 self.log_goal_ended('reached')
 
                 if self.scan_after_goal or self.goal_is_escape:
@@ -2005,6 +2033,8 @@ class FrontierExplorer(Node):
 
         if self.maneuver_name == 'Scan' and status != 4:
             self._stop_for(f'scan maneuver ended with status {status}')
+        if self.maneuver_name == 'Scan' and status == 4:
+            self.remember_scan_spot()
         if self.maneuver_name == RECOVERY_TURN_NAME:
             if status == 4:
                 self.failed_turn_sign = 0
@@ -2342,17 +2372,73 @@ class FrontierExplorer(Node):
         self.log_event(f'stuck: {reason}')
         self.escape_pending = True
 
-    def start_escape(self):
-        """Send a goal to the nearest roomy spot on the SLAM map. A scan
-        follows on arrival (scan_after_goal), then exploring resumes."""
+    def remember_scan_spot(self):
+        """
+        Remember this spot after a full scan turn, if it had room.
 
+        Room means the lidar saw at least open_space_clearance all around
+        (spot_memory.py).
+        """
+        position = self.get_robot_position()
+        scan = self.latest_scan
+        if position is None or scan is None:
+            return
+        clearance = scan_clearance(scan.ranges, scan.range_min, scan.range_max)
+        if self.spot_memory.remember(*position, clearance, time.monotonic()):
+            self.get_logger().info(
+                f'Remembered open spot x={position[0]:.2f}, y={position[1]:.2f} '
+                f'({clearance:.2f} m of room).'
+            )
+
+    def spot_still_open(self, spot):
+        """
+        Check a remembered spot is still worth going back to.
+
+        The current SLAM map must still show open_space_clearance of room
+        there, and Nav2 must not have failed to reach it lately.
+        """
+        resolution = self.map.info.resolution
+        cell = tuple(int(math.floor(v)) for v in self.world_to_grid(spot.x, spot.y))
+        return (
+            has_clearance(
+                self.map.data, self.map.info.width, self.map.info.height, cell,
+                int(math.ceil(self.open_space_clearance / resolution)),
+            )
+            and not self.is_goal_blacklisted(spot.x, spot.y)
+        )
+
+    def start_escape(self):
+        """
+        Send a goal to a spot with room, to get unstuck.
+
+        First the last remembered open spot the map still shows open, else
+        the nearest roomy spot on the SLAM map. A scan follows on arrival
+        (scan_after_goal), then exploring resumes.
+        """
         self.escape_pending = False
         self.last_escape_time = time.monotonic()
+        skip_memory, self.escape_skip_memory = self.escape_skip_memory, False
+        self.escape_spot = None
 
         position = self.get_robot_position()
         if self.map is None or position is None:
             self.get_logger().warn('Escape skipped: no map or position yet.')
             return
+
+        if self.use_spot_memory and not skip_memory:
+            spot = choose_spot(
+                self.spot_memory.spots, position, OPEN_SPACE_MIN_MOVE_M,
+                self.spot_still_open,
+            )
+            if spot is not None:
+                self.get_logger().info(
+                    f'Going back to the last open spot it scanned from: '
+                    f'x={spot.x:.2f}, y={spot.y:.2f} ({spot.clearance:.2f} m of room).'
+                )
+                self.escape_spot = spot
+                if self.send_goal(spot.x, spot.y, is_escape=True):
+                    return
+                self.escape_spot = None
 
         resolution = self.map.info.resolution
         start = tuple(int(math.floor(v)) for v in self.world_to_grid(*position))

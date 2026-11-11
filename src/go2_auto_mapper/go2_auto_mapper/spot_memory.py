@@ -1,0 +1,71 @@
+"""
+Remember open spots the robot scanned from, for getting unstuck.
+
+A spot is recorded when the robot finishes its 360 degree scan there and the
+lidar's closest return is at least `min_clearance` away: the robot has just
+proven it can stand and turn there. When the explorer gets stuck it goes back
+to the most recent spot that the current SLAM map still shows as open, before
+falling back to the nearest open space on the map (open_space.py). No ROS, so
+it can be tested on its own.
+"""
+
+from collections import namedtuple
+import math
+
+# One remembered spot: map position (m), the lidar clearance measured there
+# (m), and when (time.monotonic()).
+Spot = namedtuple('Spot', 'x y clearance stamp')
+
+# A scan this close to the last remembered spot replaces it, so turning
+# twice in one place doesn't fill the memory with copies.
+SAME_SPOT_M = 0.5
+
+
+def scan_clearance(ranges, range_min, range_max):
+    """
+    Return the closest valid lidar return in meters, or None if there is none.
+
+    Returns outside [range_min, range_max] and NaN are not measurements;
+    infinity means nothing within range that way.
+    """
+    valid = [r for r in ranges if math.isfinite(r) and range_min <= r <= range_max]
+    return min(valid) if valid else None
+
+
+class SpotMemory:
+    """The last `size` open spots, oldest first."""
+
+    def __init__(self, size, min_clearance):
+        self.size = max(1, int(size))
+        self.min_clearance = min_clearance
+        self.spots = ()
+
+    def remember(self, x, y, clearance, stamp):
+        """Add the spot if it had enough room; True if it was added."""
+        if clearance is None or clearance < self.min_clearance:
+            return False
+        spots = self.spots
+        if spots and math.hypot(spots[-1].x - x, spots[-1].y - y) < SAME_SPOT_M:
+            spots = spots[:-1]
+        self.spots = (spots + (Spot(x, y, clearance, stamp),))[-self.size:]
+        return True
+
+    def forget(self, spot):
+        """Drop a spot that turned out to be unreachable."""
+        self.spots = tuple(s for s in self.spots if s != spot)
+
+
+def choose_spot(spots, position, min_move, usable):
+    """
+    Return the most recent spot worth going back to, or None.
+
+    It must be at least `min_move` m from `position`, and `usable(spot)`
+    must accept it.
+    """
+    px, py = position
+    for spot in reversed(spots):
+        if math.hypot(spot.x - px, spot.y - py) < min_move:
+            continue
+        if usable(spot):
+            return spot
+    return None

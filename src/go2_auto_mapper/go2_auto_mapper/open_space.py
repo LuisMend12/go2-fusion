@@ -78,6 +78,25 @@ def find_open_space(data, width, height, start, clearance, max_radius,
     return best
 
 
+def has_clearance(data, width, height, cell, clearance):
+    """
+    Check that `cell` is at least `clearance` steps from any non-free cell.
+
+    Same 8-connected sense as find_open_space: every cell within
+    `clearance - 1` steps is known-free. Cells past the map edge count as
+    not free.
+    """
+    cx, cy = cell
+    reach = max(0, int(clearance) - 1)
+    if cx - reach < 0 or cy - reach < 0 or cx + reach >= width or cy + reach >= height:
+        return False
+    return all(
+        is_free(data[y * width + x])
+        for y in range(cy - reach, cy + reach + 1)
+        for x in range(cx - reach, cx + reach + 1)
+    )
+
+
 def _clearance_map(data, width, x0, y0, x1, y1):
     """Steps from each cell in the window to the nearest non-free cell
     (8-connected breadth-first search from all of them at once)."""
