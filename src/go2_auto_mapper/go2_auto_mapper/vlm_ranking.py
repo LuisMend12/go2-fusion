@@ -149,7 +149,12 @@ def vlm_shortlist(pool, count, include_longest=True):
     if max(c[3] for c in top) >= longest_cells:
         return top
     on_longest = [c for c in pool if c[3] == longest_cells]
-    return top + [min(on_longest, key=lambda c: c[0])]
+    best = min(on_longest, key=lambda c: c[0])
+    # Neighbouring frontiers can offer the same goal spot; asking twice
+    # would spend an image and let match_score read the first one only.
+    if any(c[1:3] == best[1:3] for c in top):
+        return top
+    return top + [best]
 
 
 def frontier_fact(distance_m, unknown_cells, length_m, longest):

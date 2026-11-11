@@ -8,6 +8,7 @@ from go2_auto_mapper.vlm_ranking import (
     MOVE_CLEAR_M,
     Ranking,
     ViewMemory,
+    VlmClient,
     suggestion_message,
 )
 
@@ -230,3 +231,29 @@ def test_longest_frontier_goes_through_ask_reply_pick_and_decision_log():
     (_, candidates, map_pick, vlm_pick, mode, _), = decisions
     assert (map_pick, vlm_pick, mode) == (0, 4, 'active')
     assert [c['vlm_score'] for c in candidates] == [0.1, 0.1, 0.1, 0.1, 1.0]
+
+
+def test_longest_frontier_through_the_real_client_request_and_reply():
+    sent = {}
+
+    def fake_post(url, payload, timeout, api_key):
+        content = payload['messages'][0]['content']
+        sent['prompt'] = content[0]['text']
+        sent['images'] = sum(part['type'] == 'image_url' for part in content)
+        sent['facts'] = [part['text'] for part in content if part['type'] == 'text'][1:]
+        return '{"scores": [0.1, 0.1, 0.1, 0.1, 1.0], "reason": "open hallway"}'
+
+    client = VlmClient('http://x', 'm', 1.0, encode=lambda f: f.encode(), post=fake_post)
+    node = explorer_stub('active', client)
+    node.views.remember(0.0, 0.0, 0.7854, 'frame@0.7854', time.monotonic())
+
+    assert FrontierExplorer.rank_with_vlm(node, LONG_POOL, 0.0, 0.0) is None   # asked
+    deadline = time.monotonic() + 2.0
+    while client.busy() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    ranked = FrontierExplorer.rank_with_vlm(node, LONG_POOL, 0.0, 0.0)
+
+    assert 'exactly 5 scores' in sent['prompt']
+    assert sent['images'] == 5
+    assert 'longest' in sent['facts'][-1]
+    assert min(ranked, key=lambda c: c[0])[1:3] == (2.0, 2.0)

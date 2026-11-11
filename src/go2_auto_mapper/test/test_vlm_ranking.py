@@ -352,3 +352,10 @@ def test_request_for_five_goals_asks_for_exactly_five_scores():
     assert sum(1 for part in content if part['type'] == 'image_url') == 5
     assert 'longest' in content[-2]['text']
     assert parse_reply('{"scores": [0.1, 0.2, 0.3, 0.4, 0.9], "reason": "x"}', 5)[0][-1] == 0.9
+
+
+def test_shortlist_does_not_repeat_a_goal_spot_already_shown():
+    # A neighbouring frontier offers the same spot (1, 0) as the longest one.
+    pool = [(-500.0, 1.0, 0.0, 10), (-200.0, 1.0, 0.0, 60), (-100.0, 5.0, 0.0, 60)]
+    top = vlm_shortlist(pool, 1)
+    assert [c[1:3] for c in top] == [(1.0, 0.0)]
