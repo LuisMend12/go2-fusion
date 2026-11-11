@@ -5,6 +5,8 @@ import math
 import time
 from types import MethodType, SimpleNamespace
 
+import pytest
+
 from go2_auto_mapper.explorer import FrontierExplorer
 from go2_auto_mapper.spot_memory import Spot, SpotMemory
 
@@ -234,6 +236,22 @@ def test_an_obstacle_cancel_nav2_never_answers_still_only_interrupts():
     assert node.spot_memory.spots == (Spot(7.0, 7.0, 1.0, 2.0),)
     assert node.blacklist == [] and not node.escape_pending
     assert not node.goal_active and not node.goal_cancelled_for_obstacle
+
+
+@pytest.mark.parametrize('obstacle_too', [False, True])
+def test_a_requested_scan_cancel_nav2_never_answers_is_a_pause(obstacle_too):
+    node = explorer_stub()
+    node.spot_memory.remember(7.0, 7.0, clearance=1.0, stamp=2.0)
+    node.start_escape()
+    node.goal_cancelled_for_scan = True
+    if obstacle_too:
+        node.cancel_for_obstacle()
+    node.goal_sent_time = -1000.0
+    assert node.handle_stalled_goal()
+    assert node.spot_memory.strikes == {}
+    assert node.spot_memory.spots == (Spot(7.0, 7.0, 1.0, 2.0),)
+    assert node.blacklist == [] and not node.escape_pending
+    assert not node.goal_cancelled_for_scan and not node.goal_cancelled_for_obstacle
 
 
 # ---- a trip back that times out, through the real exploration loop ----

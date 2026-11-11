@@ -2565,7 +2565,13 @@ class FrontierExplorer(Node):
         # driving there while we start a turn, back-up or new goal.
         if self.current_goal_handle is not None:
             self.current_goal_handle.cancel_goal_async()
-        if self.goal_cancelled_for_obstacle and self.goal_is_escape:
+        # Same order as navigation_result_callback: a requested scan owns the
+        # cancel, then an obstacle cancel of an escape is an interruption.
+        if self.goal_cancelled_for_scan:
+            self.get_logger().info('Goal paused for the requested scan.')
+            self.emit_goal_outcome('goal_cancelled', 'paused for requested scan')
+            self.log_goal_ended('paused')
+        elif self.goal_cancelled_for_obstacle and self.goal_is_escape:
             # The obstacle cancel was never answered: still an interruption.
             self.record_escape_interrupted()
         else:
@@ -2573,6 +2579,7 @@ class FrontierExplorer(Node):
         self.current_goal_handle = None
         self.goal_active = False
         self.goal_sent_time = None
+        self.goal_cancelled_for_scan = False
         self.goal_cancelled_for_obstacle = False
         return True
 
