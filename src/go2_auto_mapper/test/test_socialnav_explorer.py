@@ -76,7 +76,7 @@ def explorer_stub(now=100.0):
     # A local costmap view in the same frame as the map pose: (grid, x, y, yaw, map_to_local).
     node.local_view = lambda: (SimpleNamespace(header=SimpleNamespace(frame_id='odom')),
                                *node.pose, 0.0)
-    node.body_clear = lambda view, move: True
+    node.body_blocked = lambda view, move: ''
     node.people_zones = lambda: node.zones
     node.request_path_check = lambda x, y: setattr(
         node, 'socialnav_check', dict(node.socialnav_check, result=node.path_ok))
@@ -171,7 +171,7 @@ def test_lidar_without_room_drops_the_goal_and_backs_up():
 
 
 def test_a_blocked_body_outline_on_the_costmap_drops_the_goal():
-    node = blocked_by(lambda n: setattr(n, 'body_clear', lambda view, move: False))
+    node = blocked_by(lambda n: setattr(n, 'body_blocked', lambda view, move: 'costmap'))
     assert_goal_dropped(node)
 
 

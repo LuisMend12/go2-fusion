@@ -1229,16 +1229,26 @@ class FrontierExplorer(Node):
         view = self.local_view()
         if view is None:
             return False, 'the costmap or transforms are stale'
-        if not self.body_clear(view, move):
-            return False, "the body outline doesn't fit the costmap and scan along the slide"
+        blocked = self.body_blocked(view, move)
+        if blocked:
+            return False, (
+                f'the body outline along the slide ({move[0]:.2f} m forward, {move[1]:.2f} m '
+                f'left) is blocked on the {blocked}'
+            )
         return True, ''
 
-    def body_clear(self, view, move):
-        """Check the padded body along the slide on costmap and scan, as unstuck moves do."""
-        return (
-            swept_clear(view[0], *view[1:4], *move)
-            and scan_covers_move(self.latest_scan, *move)
-        )
+    def body_blocked(self, view, move):
+        """
+        Check the padded body along the slide, as unstuck moves do; '' if clear.
+
+        Otherwise says which check refused it: 'costmap' (a wall, unknown or off-grid cell in
+        the path) or 'scan' (a return inside the path, or missing rays ahead along it).
+        """
+        if not swept_clear(view[0], *view[1:4], *move):
+            return 'costmap'
+        if not scan_covers_move(self.latest_scan, *move):
+            return 'scan'
+        return ''
 
     def request_path_check(self, x, y):
         """
