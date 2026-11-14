@@ -2,7 +2,7 @@
 title: Scoreboard
 parent: maps-nav
 code: [src/go2_scoreboard/**]
-verified: 4ef0f27da67b
+verified: 8d317800c468
 ---
 
 # Scoreboard
@@ -25,6 +25,14 @@ Part of: [Maps and navigation](maps-nav.md)
 Accuracy stays `null` until the team has a measured-floor-plan scorer. A run
 without an answer key also stores completeness as `null`; the scoreboard never
 invents a percentage.
+
+When an answer key is supplied, its floor mask and alignment are prepared once
+before recording starts. Each new SLAM map reuses those fixed points with its
+current size, origin and resolution. Rebuilding the answer key for every map
+was a measured multi-second callback bottleneck in hallway recordings with
+undercounted distance and apparent jumps. The one-metre discontinuity filter is unchanged. Existing
+recordings retain their original scores; replay writes a separate derived run.
+Runtime distance parity must still be checked after this optimization.
 
 ## Interfaces
 
@@ -92,6 +100,10 @@ ros2 run go2_scoreboard replay /path/to/bag --out /path/to/replays
 - If `ros2 bag record` exits, measurements continue and the report records a warning.
 - Ctrl+C finalizes a partial report. A hard container or power failure leaves the last atomic checkpoint.
 - Reusing one Docker build volume across unrelated branches can leave stale build metadata. Use a separate Compose project or build volume for clean comparison runs.
+
+## Investigations
+
+- [Scoreboard distance investigation](scoreboard-distance-investigation.md): why the live distance once undercounted, and the fix.
 
 ## Who's on it and what's next
 
