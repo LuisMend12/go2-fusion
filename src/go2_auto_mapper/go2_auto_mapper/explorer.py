@@ -1098,6 +1098,8 @@ class FrontierExplorer(Node):
             # Something else moved Oak while the planner was thinking: that approval was for
             # another start. The next loop checks the step again from here.
             return
+        if self.socialnav_yield(pose, check['move']):
+            return  # someone stepped in meanwhile: check the step again once they pass
         self.start_socialnav_step(check['move'])
 
     def use_socialnav_answer(self, answer, pose, now):
@@ -1125,6 +1127,8 @@ class FrontierExplorer(Node):
         self.socialnav_points = points
         if move is None:
             return  # every waypoint walked: the next loop asks SocialNav again
+        if self.socialnav_yield(pose, move):
+            return  # waypoints kept for when they have passed
         ok, reason = self.socialnav_step_ok(move, body_offset(*points[0], *pose))
         if not ok:
             self.socialnav_blocked(reason)
@@ -1156,6 +1160,42 @@ class FrontierExplorer(Node):
             if self.socialnav_client.submit(list(self.socialnav_history.samples),
                                             *self.socialnav_goal):
                 self.socialnav_asked_at = now
+
+    def socialnav_yield(self, pose, move):
+        """
+        Wait for people in the way of the next slide; True while waiting.
+
+        Like yield_for_people for Nav2 goals, but along the slide itself (Oak may strafe): a
+        person, their next steps or a group on the line to the slide's end, or around that end,
+        holds Oak still for up to YIELD_MAX_SEC. Then it carries on (the lidar and costmap
+        checks still apply), and doesn't wait again until the way has been clear once.
+        """
+        if not self.yield_to_people:
+            self.yield_since, self.yield_spent = None, False
+            return False
+        x, y, yaw = pose
+        end_x = x + math.cos(yaw) * move[0] - math.sin(yaw) * move[1]
+        end_y = y + math.sin(yaw) * move[0] + math.cos(yaw) * move[1]
+        zones = self.people_zones()
+        ahead = line_crosses(x, y, end_x, end_y, zones) or zone_at(end_x, end_y, zones)
+        if ahead is None:
+            self.yield_since, self.yield_spent = None, False
+            return False
+        if self.yield_spent:
+            return False
+        now = self.monotonic()
+        if self.yield_since is None:
+            self.yield_since = now
+            self.get_logger().info(
+                f'A {ahead.kind} is in the way of the next SocialNav step; '
+                'waiting for them to pass.'
+            )
+        if now - self.yield_since >= YIELD_MAX_SEC:
+            self.yield_spent = True
+            self.get_logger().info('Still in the way; carrying on.')
+            return False
+        self._hold_stop()
+        return True
 
     def socialnav_obstacle_ahead(self):
         """

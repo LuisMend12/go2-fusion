@@ -4,13 +4,14 @@ import math
 from types import MethodType, SimpleNamespace
 
 from go2_auto_mapper.explorer import FrontierExplorer
+from go2_auto_mapper.social_space import Zone
 from go2_auto_mapper.socialnav import History
 from go2_auto_mapper.socialnav_follow import ANSWER_TIMEOUT_SEC, Answer
 
 # The explorer methods these tests run for real; SocialNav, Nav2 and sensors are faked.
 REAL_METHODS = (
     'start_socialnav_goal', 'tick_socialnav', 'use_socialnav_answer', 'wait_for_socialnav',
-    'finish_path_check', 'plan_socialnav_step', 'socialnav_obstacle_ahead',
+    'finish_path_check', 'plan_socialnav_step', 'socialnav_obstacle_ahead', 'socialnav_yield',
     'socialnav_step_ok', 'start_socialnav_step',
     'socialnav_blocked', 'socialnav_reached', 'clear_socialnav', 'record_goal_failure',
     'request_escape', 'tick_recovery',
@@ -59,7 +60,8 @@ def explorer_stub(now=100.0):
         current_goal=None, goal_is_escape=False, consecutive_failures=0,
         stuck_failure_count=3, escape_pending=False, last_escape_time=None,
         escape_spot=None, use_spot_memory=False,
-        pose=(0.0, 0.0, 0.0), path_ok=True,
+        pose=(0.0, 0.0, 0.0), path_ok=True, yield_to_people=True, zones=[],
+        yield_since=None, yield_spent=False,
         messages=messages, events=events, stops=stops, blacklist=blacklist,
         published=published, clock=clock,
     )
@@ -75,6 +77,7 @@ def explorer_stub(now=100.0):
     node.local_view = lambda: (SimpleNamespace(header=SimpleNamespace(frame_id='odom')),
                                *node.pose, 0.0)
     node.body_clear = lambda view, move: True
+    node.people_zones = lambda: node.zones
     node.request_path_check = lambda x, y: setattr(
         node, 'socialnav_check', dict(node.socialnav_check, result=node.path_ok))
     node._hold_stop = lambda: stops.append('hold')
@@ -278,3 +281,67 @@ def test_an_obstacle_ahead_between_slides_drops_the_goal():
     node.start_socialnav_goal(3.0, 0.0)
     node.socialnav_obstacle_ahead()
     assert_goal_dropped(node)
+
+
+# A person standing 0.4 m to Oak's left, right where a sideways slide would go.
+PERSON_LEFT = [Zone(0.0, 0.4, 0.3, 'person')]
+
+
+def test_a_person_in_the_way_of_the_next_slide_makes_oak_wait():
+    node = explorer_stub()
+    node.zones = PERSON_LEFT
+    node.start_socialnav_goal(0.0, 3.0)
+    node.socialnav_client.answer = answer([[-0.4, 0.0]] * 5)   # slide 0.4 m left
+    node.tick_socialnav()
+    assert node.socialnav_check is None and node.recovery_move is None
+    assert 'hold' in node.stops
+    assert node.socialnav_points                 # waypoints kept for after they pass
+    assert node.socialnav_goal == (0.0, 3.0)     # goal kept, nothing blacklisted
+    assert node.blacklist == []
+    assert any('waiting for them to pass' in m for m in node.messages)
+
+
+def test_once_the_person_has_passed_the_slide_goes_ahead():
+    node = explorer_stub()
+    node.zones = PERSON_LEFT
+    node.start_socialnav_goal(0.0, 3.0)
+    node.socialnav_client.answer = answer([[-0.4, 0.0]] * 5)
+    node.tick_socialnav()
+    node.zones = []                              # they walked on
+    node.tick_socialnav()                        # plan + planner check
+    node.tick_socialnav()                        # slide
+    assert math.isclose(node.recovery_move[3][1], 0.4)
+
+
+def test_after_six_seconds_oak_carries_on_like_with_nav2_goals():
+    node = explorer_stub()
+    node.zones = PERSON_LEFT
+    node.start_socialnav_goal(0.0, 3.0)
+    node.socialnav_client.answer = answer([[-0.4, 0.0]] * 5)
+    node.tick_socialnav()
+    node.clock['now'] += 6.5
+    node.tick_socialnav()                        # waited long enough: plan the step
+    node.tick_socialnav()
+    assert node.recovery_move is not None
+    assert any('carrying on' in m for m in node.messages)
+
+
+def test_a_person_stepping_in_while_the_planner_thinks_cancels_that_approval():
+    node = explorer_stub()
+    node.start_socialnav_goal(0.0, 3.0)
+    node.socialnav_client.answer = answer([[-0.4, 0.0]] * 5)
+    node.tick_socialnav()                        # planned, no one there
+    node.zones = PERSON_LEFT
+    node.tick_socialnav()
+    assert node.recovery_move is None and 'hold' in node.stops
+
+
+def test_people_are_ignored_when_yielding_is_off():
+    node = explorer_stub()
+    node.zones = PERSON_LEFT
+    node.yield_to_people = False
+    node.start_socialnav_goal(0.0, 3.0)
+    node.socialnav_client.answer = answer([[-0.4, 0.0]] * 5)
+    node.tick_socialnav()
+    node.tick_socialnav()
+    assert node.recovery_move is not None
