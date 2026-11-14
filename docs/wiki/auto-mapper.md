@@ -2,7 +2,7 @@
 title: Auto mapper
 parent: maps-nav
 code: [src/go2_auto_mapper/**]
-verified: 4470a2237739
+verified: 3a343963373a
 ---
 
 # Auto mapper
@@ -115,7 +115,7 @@ With the VLM on (`shadow` or `active`), it also writes `decisions.jsonl`: one li
 
 Off by default. When on, the explorer still picks **where** to go (a frontier on the lidar map), and SocialNav plans **how**: the explorer keeps the last 5 camera pictures with Oak's position (1 s apart), asks the SocialNav server for 5 waypoints toward the goal, and walks them itself instead of handing the goal to Nav2. Before each step it checks that the lidar sees room out to the waypoint (plus 0.3 m), that the padded body fits the costmap and the live scan along the way (the same check as the unstuck moves), and that Nav2's planner finds a path there (/compute_path_to_pose, which plans without driving). Then it slides straight there, sideways if needed and without turning, at most 0.5 m per step at `socialnav_speed` (0.10 m/s) on `/cmd_vel_mapper`, rechecking 4 times a second. After the 5 waypoints it asks again; within 0.5 m of the goal counts as reached (a scan follows, as after a Nav2 goal).
 
-**The lidar wins.** A step that fails any check, or a slide whose clearance disappears, drops the goal (blacklisted like a failed Nav2 goal), Oak backs up with an unstuck move, and the explorer picks another goal. Three answers in a row with nowhere to move also drop it, and so does something within 0.3 m of the nose between slides. A planner approval only counts if Oak hasn't moved while the planner was thinking. **If SocialNav doesn't answer for 30 s, Oak holds still** (no back-ups either) and keeps asking, and carries on by itself once it answers. It needs `SOCIALNAV_URL` (or `socialnav_url`) and the camera. Expect slower exploring than with Nav2 (0.10 m/s against up to 0.5 m/s); escapes to open space still use Nav2. TODO(Luis): how it compares in the simulator and on Oak.
+**The lidar wins.** A step that fails any check, or a slide whose clearance disappears, drops the goal (blacklisted like a failed Nav2 goal), Oak backs up with an unstuck move, and the explorer picks another goal. Three answers in a row with nowhere to move also drop it, and so does something within 0.3 m of the nose between slides. A planner approval only counts if Oak hasn't moved while the planner was thinking. **People:** with `yield_to_people` on, a person, their next steps or a group on the line of the next slide (or around its end) makes Oak wait up to 6 s for them to pass, like a Nav2 goal does, then carry on with the lidar and costmap checks still in force; it doesn't wait again until the way has been clear once. **If SocialNav doesn't answer for 30 s, Oak holds still** (no back-ups either) and keeps asking, and carries on by itself once it answers. It needs `SOCIALNAV_URL` (or `socialnav_url`) and the camera. Expect slower exploring than with Nav2 (0.10 m/s against up to 0.5 m/s); escapes to open space still use Nav2. TODO(Luis): how it compares in the simulator and on Oak.
 
 ### Using the VLM
 
