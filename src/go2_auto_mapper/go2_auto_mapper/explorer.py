@@ -3355,6 +3355,11 @@ OPEN_SPACE_SEARCH_RADIUS_M = 4.0
 OPEN_SPACE_MIN_MOVE_M = 0.5
 # Remembered spots farther than this walk are not considered when stuck.
 SPOT_WALK_MAX_M = 8.0
+# How long the Nav2 planner may take to check a SocialNav step before it counts as blocked.
+SOCIALNAV_PATH_CHECK_SEC = 5.0
+# A planner approval only counts if Oak is still this close to where it was asked from.
+SOCIALNAV_SAME_POSE_M = 0.05
+SOCIALNAV_SAME_YAW_RAD = 0.05
 ESCAPE_COOLDOWN_SEC = 30.0
 
 # "No usable goal" this many loops in a row counts as stuck.
