@@ -2,7 +2,7 @@
 title: Auto mapper
 parent: maps-nav
 code: [src/go2_auto_mapper/**]
-verified: 050d56c8071c
+verified: 2e499095a3c8
 ---
 
 # Auto mapper
@@ -11,164 +11,117 @@ The auto mapper lets Oak map a room by itself: it keeps finding the edges of wha
 
 Part of: [Maps and navigation](maps-nav.md)
 
-## Recovery changes
-
-Jeth's recovery change (original commit fd78cac) was merged through PR #65
-separately from the Header repair. It adds backward diagonal moves and a bounded Nav2
-turn toward open scan space, and reduces false cancellation during turns.
-Some close-wall moves use a non-worsening clearance test rather than the old
-conservative envelope. Five matched hallway starts averaged 52.6% coverage
-versus 39.9% without this change, with zero collisions but no completed maps.
-This is simulation evidence, not physical Oak validation. Keep the callback
-ownership and scoring repairs separate when comparing behavior.
-
 ## How it works
 
 **Frontiers.** On the [SLAM](slam.md) map, every 5 cm square is free, wall, or unknown. A frontier is a free square right next to an unknown one: the border between "explored" and "not yet seen". Imagine exploring a dark building with a flashlight: the frontier is every doorway and corner you have glimpsed but not walked through. Go stand at a frontier, look around, and the map grows. Repeat until there are no frontiers left.
 
-**One exploration loop** (node `explorer`, every 2 seconds):
+Since November 2026 the explorer is a Python port of the frontier explorer in Manas Arumalla's [autonomous-go2-inspection](https://github.com/Manas-arumalla/autonomous-go2-inspection) (written there in C++ for ROS 2 Jazzy and Gazebo Harmonic). It only reads `/map` and TF and only talks to Nav2, so it runs the same on Oak and in our Gazebo Fortress [Simulator](simulator.md).
 
-1. **Look around first.** At start and after each goal, Oak turns a full circle using Nav2's Spin behavior, so the lidar sees everything around it and SLAM can place it on the map.
-2. **Find frontiers.** It scans `/map` for frontier squares and groups neighbours into regions; regions under 5 squares are treated as noise. Since 2026-10-17 this is one fast numpy pass: about 4.4 ms instead of 0.5 s on a 40 x 40 m map.
-3. **Pick a goal.** For each region it picks spots 0.8 m back into known space and at least 0.5 m from walls. It skips directions it was just blocked in, spots closer than 1.5 m, and spots without a clear straight line. Of the rest, it picks the one that would reveal the most: it casts 48 imaginary rays from each spot out to 4 m and counts unknown squares they would uncover, minus a cost per meter of walking.
-   **Optionally, ask a vision-language model (VLM).** With `vlm_mode` on, the best 4 spots are also shown to a VLM (Qwen2.5-VL) running on a cloud GPU, plus the best spot on the longest unexplored edge when none of those 4 is on it (the reveal score alone tends to rank a long edge a little farther away below short near ones): one camera picture toward each, taken during the last 360 degree turn. It is also told what the map says about each spot (how far, how many unknown squares, how long its unexplored edge is, roughly from its square count, and which one is the longest edge Oak can head for now). It scores each from 0 to 1 for "will walking this way show a lot of new space" (a doorway or hallway scores high, a wall or dead end low), and that score is added to the reveal score. The VLM only reorders spots the map already found safe; lidar and Nav2 still decide where Oak can walk. See [Using the VLM](#using-the-vlm). In `active` mode with the panel's VLM view on, the VLM's suggested move also counts (it is told the lidar's distance each way when it suggests one): goals within 45 degrees of that direction are worth 300 more unknown squares (`vlm_suggest_weight`), unless the lidar sees something closer than 0.8 m that way or the suggestion is over 15 s old. A suggestion only picks among goals the map already found safe, and Nav2 still drives. "Stop" is not obeyed: it changes nothing.
-4. **Go.** It sends the goal to [Nav2](nav2.md) on `/navigate_to_pose`, exactly like clicking "Nav2 Goal" in RViz, so Nav2's obstacle avoidance still applies.
-5. **Learn from it.** If a visit did not shrink the frontier (the opening can't be seen into), that frontier is skipped for 2 minutes. Failed goals are also skipped for 2 minutes.
-6. **Get unstuck.** If something is within 0.3 m of the nose, it cancels the goal and checks short moves backward, left and right against the live `/scan` and Nav2's local costmap. It tries the configured distance first, then bounded 0.15 m and 0.08 m fallbacks when the longer move cannot fit, sliding at 0.1 m/s along the safest one. These moves go out on `/cmd_vel_mapper`, a [twist_mux](twist-mux.md) input at priority 6 (above Nav2, below keyboard and gamepad). If nothing is safe, it stays stopped and logs why.
-7. **Head for open space.** After 3 failed goals in a row (or similar signs of being stuck), it first goes back to the closest spot (by walking distance on the map, up to 8 m) where it finished a 360 degree scan with at least 0.8 m of room on the lidar, if the map still shows that spot open. If there is none, or Nav2 can't get there, it drives to the nearest spot with 0.8 m of room on every side instead. Either way it scans there and carries on.
-8. **Let people pass.** While walking to a goal, if a person, where they are about to step, or a group is within 1.5 m straight ahead, Oak stands still (zero speed on `/cmd_vel_mapper`) for up to 6 s, then carries on and lets Nav2 steer around them. It waits again only after the way has been clear once, so someone standing in a hallway can't stop exploring.
-9. **Finish.** With no frontiers left it logs "Exploration complete" and waits, in case a door opens.
+**One planning loop** (node `frontier_explorer`, every 2 seconds):
 
-**People.** When [object detection](object-detection.md) runs, it publishes `/people`: where each person is, a straight-line guess of where they will walk, and who stands together in a group (ideas from [SocialNav](https://github.com/ram95d/SocialNav)). The explorer keeps goals out of a 1 m circle around each person, out of a 0.6 m band along their next 2.4 s of walking, and out of the inside of a group (a robot should go around two people talking, not between them). A goal whose straight path crosses one of these only loses ties. This is a ranking step like the others, so a room full of people never stops exploring. Without `/people`, nothing changes.
+1. **Find frontiers.** It marks every frontier square on `/map` and groups touching ones into regions. Regions under 8 squares are noise.
+2. **Aim at each region.** Each region's goal is its square *nearest* Oak that is at least 0.8 m away and at least 0.55 m from any wall (about Nav2's inflation and more than the body's 0.45 m reach), so Nav2 can fit Oak there. Unknown squares don't count as walls.
+3. **Pick the best region.** Score = region size minus 3 x distance in meters: big openings beat small ones, close beats far.
+4. **Take short steps.** A goal more than 3 m away is replaced by the farthest safe spot on the straight line toward it within 3 m. The next loop looks again and steps again, so Nav2 rarely gets a long goal it can't finish.
+5. **Go.** It sends the goal to [Nav2](nav2.md) on `/navigate_to_pose`, facing the frontier, exactly like clicking "Nav2 Goal" in RViz.
+6. **Watch the walk.** While Nav2 drives, the explorer checks every loop: within 0.55 m of the goal for 3 s counts as arrived (the lidar already sees past it); less than 0.25 m of movement in 18 s means stuck; 60 s total means timed out. Either way the goal is cancelled and another frontier is picked.
+7. **Blacklist.** Every goal it tried (reached or failed) is skipped for 30 s within 0.5 m, so it doesn't pick the same spot again. Entries expire, so no area is given up on for good.
+8. **Finish.** With no frontier left: if frontier squares exist but all were blacklisted, it clears the blacklist and retries (up to 3 times until the map grows again). It logs "Exploration complete" (the simulator trial runner watches for this text) only after 3 empty loops in a row, and then stops.
 
-At the same state transitions it publishes structured, reliable
-`/auto_mapper/events` messages for the [Scoreboard](scoreboard.md): exploration
-start/stop/completion, goal sent/accepted/outcome, recovery start/finish and
-stale sensing. These messages observe existing choices; they do not choose a
-frontier, change a threshold or send motion.
+**Recovery belongs to Nav2.** The explorer never sends a speed itself. Backing up and spinning when stuck are Nav2's own behaviors, which check the costmap before moving; a blind reverse could hit what is behind Oak.
 
-**Buttons.** The RViz AutoMapper panel has **Start/Stop**, **Scan** (pause the goal, forget recent failures, turn 360 degrees; the same as calling `/frontier_explorer/scan`) and **Reset maps** (restart SLAM with an empty 2D map and clear the 3D point cloud).
+The frontier goals are drawn as small green dots on `/explore/frontiers` (add a MarkerArray display in RViz). At each step it also publishes `/auto_mapper/events` for the [Scoreboard](scoreboard.md): exploration started/stopped/completed and goal sent/accepted/reached/failed/cancelled. These only report; they don't change what the explorer does.
+
+**Buttons and services.** The RViz AutoMapper panel's **Start/Stop** runs and kills the node; **Scan** calls `/frontier_explorer/scan`: it pauses the current goal (not counted as failed), forgets the blacklist and turns 360 degrees with Nav2's Spin, then carries on. `/explore/stop` and `/explore/start` (`std_srvs/srv/Empty`) pause and resume exploring without killing the node.
 
 ### The finer details
 
-- **Replies belong to their own goal.** Each navigation submission and result
-  callback keeps the sequence number of the goal that created it. A late reply
-  from a timed-out or replaced goal cannot clear the new handle, blacklist the
-  new destination or count as its failure. A late accepted old submission goes
-  through the existing orphan-action cancellation/stop path until its end is
-  confirmed. This corrects action bookkeeping; it does not make unknown space
-  traversable or establish a complete map. See the
-  [callback investigation](navigation-goal-callback-investigation.md).
-
-- **Before SLAM is ready.** Until SLAM publishes the `map` frame, the explorer logs "Waiting for robot position" and does nothing else.
-- **Goal spots.** Each region offers its middle plus one spot about every meter along long regions. The "clear straight line" check uses Nav2's local costmap (`/local_costmap/costmap`). The reveal score subtracts `info_gain_cells_per_meter` (100) unknown squares per meter of travel; the logic lives in `frontier_scoring.py`.
-- **Unstuck moves, exactly.** It checks the whole padded body (0.36 m forward, 0.45 m back, 0.40 m wide, plus a 5 cm margin) everywhere it could be during the move: anywhere along the way, up to 0.05 m off the line and turned up to 0.10 rad (about 6 degrees), which are the limits that abort the move. They were 0.10 m and 0.15 rad; at those, the bigger envelope touched walls 0.17 m away and Oak never made a recovery move in the simulator. Only walls themselves (lethal costmap cells) block it, not their inflation. The one exception is the obstacle that stopped Oak: while backing straight away from it, anything past the nose is ignored. Unknown cells, a scan older than 0.75 s, and missing or infinite rays toward the space the move enters all count as unsafe. It picks the safe corridor with the most extra clearance, moves for at most 8 seconds, and rechecks 4 times a second. `/scan` must be in the `base_link` frame. If no direction is safe, the robot drifts, or clearance disappears, it stays stopped (a "latch"). A later fresh scan clears the latch when the way ahead is open, or starts another short move when a rear or side corridor has opened; **Scan** clears it at once.
-- **After a move** it stays stopped until a newer `/scan`, live `/point_cloud2`, local costmap and map/odom transforms arrive. A new SLAM `/map` is needed only when the move was at least 0.2 m (slam_toolbox's minimum travel). Obstacles that moved away are cleared by Nav2's costmap voxel layer tracing `/scan` (`clearing: true` in `nav2_params.yaml`); unknown local costmap cells stay unknown, so recovery never treats them as free. The scan's height filter also limits which obstacles recovery can see.
-- **Stuck** means 3 failed goals in a row (`stuck_failure_count`), an obstacle-ahead abort, or "No usable goal" twice running. The open-space search goes through free space up to 4 m away (so never through walls). A spot is only remembered after a full turn with a fresh scan that sees all around. Remembered spots (the last 10) are compared by the walk to them through known-free squares, so one just behind a wall isn't counted as close, and are checked against the current map before use, so one an obstacle has since appeared at is skipped. If Nav2 fails or times out on the way to a remembered spot, that spot is forgotten and the nearest open space is tried right away, the one exception to the 30 s gap below. If something comes within 0.3 m of the nose on the way to either kind of open spot, the trip only counts as interrupted: Oak backs up, the spot is not blacklisted, and a remembered spot is forgotten only after the second such interruption. Otherwise a failed escape does not trigger another one, escapes are at least 30 s apart, and escape goals always trigger a scan, even with `scan_after_goal` off. A failed scan also leaves exploration stopped.
-- **Stopping.** Ctrl+C (or `docker stop`, which sends SIGTERM) first stops the explorer's own timers, so nothing new starts moving Oak, and refuses new Scan requests. It sends a zero speed on `/cmd_vel_mapper` and cancels the goal Oak is walking to first, then any Spin or back-up still running, waiting up to 2 s for each cancel to reach Nav2, so Oak does not keep walking toward a goal nobody tracks. A goal Nav2 has not answered yet has nothing to cancel, so it waits up to 2 s for the answer; if Nav2 never answers, it cancels every goal on that action, other programs' too, because stopping the robot is the safe side. Publishing an empty Twist on `/cmd_vel_joy` works as an emergency stop because twist_mux gives it the highest priority (10), overriding Nav2.
+- **Before SLAM is ready.** Until `/map` exists, has at least 50 free squares and SLAM publishes the `map` frame, it logs "waiting" and does nothing, so an empty first map can't end exploring at once.
+- **Late Nav2 replies.** Each goal is numbered. A reply about a goal that was already given up is ignored, and if Nav2 accepts it late it is cancelled, so two goals never run at once. (The C++ original could blacklist the new goal by mistake here.)
+- **Stopping.** Ctrl+C cancels the Nav2 goal or Spin in flight and waits up to 2 s for Nav2 to hear it. If RViz (which started it) dies, the explorer gets Ctrl+C too. Publishing an empty Twist on `/cmd_vel_joy` is an emergency stop because [twist_mux](twist-mux.md) gives it the highest priority (10).
+- **Simulated time.** The loop runs on the wall clock, like the original; the timeouts above use ROS time, so they follow `/clock` in the simulator.
 
 ### Settings
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `map_topic` | `/map` | Occupancy grid topic to read |
-| `robot_frame` | `base_link` | TF frame for the robot's position |
-| `map_frame` | `map` | TF frame the map is published in |
-| `min_frontier_size` | `5` | Minimum cluster size (in cells) to count as a real frontier |
-| `goal_distance` | `0.8` | How far inside known space, toward the robot, to place the goal |
-| `min_goal_distance` | `1.5` | Skip goals closer than this (meters) while any farther frontier is left |
-| `wall_clearance` | `0.5` | Skip goal spots closer than this (meters) to a wall in the SLAM map |
-| `info_gain_range` | `4.0` | How far (meters) the lidar is assumed to see when estimating what a goal would reveal |
-| `info_gain_rays` | `48` | Rays cast per candidate for that estimate |
-| `info_gain_cells_per_meter` | `100.0` | Unknown cells a meter of travel must be worth (400 cells = 1 square meter at 5 cm) |
-| `obstacle_stop_distance` | `0.3` | Gap (meters) in front of the nose that counts as blocked |
-| `blocked_timeout` | `0.0` | Seconds an obstacle must stay ahead before a goal is given up (0 = at once) |
-| `backup_distance` | `0.3` | Preferred unstuck distance in meters, clamped to 0.05-0.5 m; shorter 0.15 m and 0.08 m moves are tried only when needed |
-| `open_space_clearance` | `0.8` | Room (meters) on every side that counts as open space when stuck |
-| `stuck_failure_count` | `3` | Failed goals in a row that count as stuck |
-| `use_spot_memory` | `true` | When stuck, try the closest remembered open spot it scanned from before the nearest open space |
-| `spot_memory_size` | `10` | How many scanned open spots to remember |
-| `scan_on_start` | `true` | Turn a full circle before exploring |
-| `scan_after_goal` | `true` | Turn a full circle after each goal it reaches |
-| `scan_yaw` | `6.283` (2 pi) | How far to turn per scan, in radians |
-| `scan_time_allowance` | `30.0` | Seconds Nav2 has to finish the turn before giving up |
-| `vlm_mode` | `off` | `off`; `shadow` (ask the VLM and log its pick, but use the map score); `active` (add the VLM's score) |
-| `vlm_url` | `http://localhost:8000/v1/chat/completions` | The VLM server's OpenAI-style chat address (vLLM or Ollama), usually through an SSH tunnel |
-| `vlm_model` | `Qwen/Qwen2.5-VL-7B-Instruct` | Model name the server knows it by |
-| `vlm_weight` | `400.0` | How much the VLM counts: from a sure "no" to a sure "yes" is worth this many unknown cells (400 = 1 square meter) |
-| `vlm_timeout` | `8.0` | Seconds to wait for the VLM before going with the map score alone |
-| `nav_log_dir` | empty | Folder for the navigation log; empty is off |
-| `vlm_candidates` | `4` | How many of the best spots to show the VLM |
-| `vlm_include_longest` | `true` | Also show the VLM the best spot on the longest unexplored edge when the best spots miss it |
+| `min_frontier_size` | `8` | Smallest region (squares) that counts as a frontier |
+| `min_goal_distance` | `0.8` | Goals are at least this far (m) from Oak |
+| `goal_clearance` | `0.55` | Goals are at least this far (m) from any wall |
+| `free_threshold` / `occupied_threshold` | `25` / `65` | Map values at or below / at or above these count as free / wall |
+| `gain_scale` / `potential_scale` | `1.0` / `3.0` | Score = gain_scale x size - potential_scale x distance |
+| `max_goal_distance` | `3.0` | Longest single step (m) toward a far frontier |
+| `arrival_radius` / `arrival_patience` | `0.55` / `3.0` | Within this many m for this many s counts as arrived |
+| `progress_dist` / `progress_timeout` | `0.25` / `18.0` | Less movement (m) than this for this long (s) counts as stuck |
+| `goal_timeout` | `60.0` | Seconds before any goal is given up |
+| `blacklist_radius` / `blacklist_ttl` | `0.5` / `30.0` | Tried goals block this radius (m) for this long (s) |
+| `done_confirm` / `max_clear_retries` | `3` / `3` | Empty loops before COMPLETE / blacklist clears before giving up |
+| `planning_period` | `2.0` | Seconds between loops |
+| `autostart` | `true` | Start exploring at once (else wait for `/explore/start`) |
+| `robot_base_frame` / `map_frame` | `base_link` / `map` | TF frames |
+| `scan_yaw` / `scan_time_allowance` | `6.283` / `30.0` | Scan button: turn (rad) and seconds Nav2 gets for it |
 
-### The navigation log
+### What the old explorer did that this one doesn't
 
-Set `NAV_LOG_DIR` in the container's environment (or the `nav_log_dir` parameter) and the explorer keeps a diary in that folder: `goals.jsonl` has one line per goal, with where Oak was, the goal, how it ended (`reached`, `failed` or `paused`), how many new map squares it led to (`revealed_cells`), and any recovery moves or stuck moments. With the VLM on, it also saves the camera picture toward the goal. Off by default. It is there for reading a run afterwards, and as training data if the VLM is ever fine-tuned: a picture labeled by what walking that way really showed. Each goal is written when the next one is sent, and the last one when the explorer stops.
+On Luis's branch `luis/fix/socialnav-constants`, only `explorer.py` was swapped for this port. The old explorer's helper files are still in the package, but the new explorer doesn't use any of them, so these are **off**, whatever the launch files or panel set:
 
-With the VLM on (`shadow` or `active`), it also writes `decisions.jsonl`: one line per VLM ranking, with every candidate goal, the map score's pick, the VLM's pick, and the map at that moment saved beside it (`map_0001.npz` and so on). In `shadow` mode the VLM's pick is never driven to, so this is the only trace of what it would have done; the [Simulator](simulator.md#score-vlm-decisions) can score each pick against the true map.
+- VLM goal ranking (`vlm_mode`), including the longest-frontier hint
+- spot memory (walking back to a remembered open spot when stuck)
+- SocialNav steps (`socialnav_mode`)
+- the explorer's own unstuck moves on `/cmd_vel_mapper`
+- waiting for people (`yield_to_people`)
+- the navigation log (`nav_log_dir`)
+- the `/frontier_explorer/goal` topic
 
-### SocialNav paths (watch only)
+The tests for those explorer features were removed with it; the tests for the helper files still pass. Old parameters such as `vlm_mode` are simply ignored.
 
-`ros2 run go2_auto_mapper socialnav_view` asks the [SocialNav](https://github.com/AMAP-EAI/SocialNav) model (CVPR 2026, Apache-2.0), served by `host_tools/socialnav/server.py` on a GPU server, which way to walk. Every 3 s it sends the last 5 camera pictures (1 s apart), where Oak was for each, and the goal: the explorer's current goal (`/frontier_explorer/goal`), or a point 3 m ahead (`goal_ahead_m`, `goal_left_m`) if the explorer is off. It publishes the 5 waypoints it gets back as `/socialnav/path` (add a Path display in RViz) and a line on `/socialnav/status` saying how many have room by the lidar. **It never drives Oak.** It needs `SOCIALNAV_URL` (default `http://localhost:8100/waypoints`). How well it works on Oak is unknown: the model's training prompt is private, `step_scale` is a guess (at least 0.3 m), and in a first test on fake pictures the goal barely changed its path.
+### Other programs in this package
 
-### SocialNav steps (`socialnav_mode:=active`)
+These run as separate nodes and still work, but no longer change what the explorer does:
 
-Off by default. When on, the explorer still picks **where** to go (a frontier on the lidar map), and SocialNav plans **how**: the explorer keeps the last 5 camera pictures with Oak's position (1 s apart), asks the SocialNav server for 5 waypoints toward the goal, and walks them itself instead of handing the goal to Nav2. Before each step it checks that the lidar sees room out to the waypoint (plus 0.3 m), that the padded body fits the costmap and the live scan along the way (the same check as the unstuck moves), and that Nav2's planner finds a path there (/compute_path_to_pose, which plans without driving). Then it slides straight there, sideways if needed and without turning, at most 0.5 m per step at `socialnav_speed` (0.10 m/s) on `/cmd_vel_mapper`, rechecking 4 times a second. After the 5 waypoints it asks again; within 0.5 m of the goal counts as reached (a scan follows, as after a Nav2 goal).
-
-**The lidar wins.** A step that fails any check, or a slide whose clearance disappears, drops the goal (blacklisted like a failed Nav2 goal), Oak backs up with an unstuck move, and the explorer picks another goal. Three answers in a row with nowhere to move also drop it, and so does something within 0.3 m of the nose between slides. A planner approval only counts if Oak hasn't moved while the planner was thinking. **People:** with `yield_to_people` on, a person, their next steps or a group on the line of the next slide (or around its end) makes Oak wait up to 6 s for them to pass, like a Nav2 goal does, then carry on with the lidar and costmap checks still in force; it doesn't wait again until the way has been clear once. **If SocialNav doesn't answer for 30 s, Oak holds still** (no back-ups either) and keeps asking, and carries on by itself once it answers. It needs `SOCIALNAV_URL` (or `socialnav_url`) and the camera. Expect slower exploring than with Nav2 (0.10 m/s against up to 0.5 m/s); escapes to open space still use Nav2. TODO(Luis): how it compares in the simulator and on Oak.
-
-### Using the VLM
-
-The model needs an NVIDIA GPU, so it runs on a GPU server, not the laptop. **Camera pictures leave the robot:** with `vlm_mode` on or the VLM view running, Oak's camera pictures are sent to that server (the team uses a university GPU server), and with `NAV_LOG_DIR` set they are also saved where the explorer runs. Both are off by default. The laptop reaches it through an SSH tunnel; the explorer never waits on the network for more than `vlm_timeout`.
-
-1. **On the GPU server** (over SSH), start an OpenAI-style server. With vLLM: `vllm serve Qwen/Qwen2.5-VL-7B-Instruct --port 8000`. With Ollama: `ollama pull qwen2.5vl:7b`, then use port 11434 and `vlm_model:=qwen2.5vl:7b`. TODO(Luis): which server and model fit the cloud GPU's memory.
-2. **On the laptop**, open the tunnel and leave it running: `ssh -N -L 8000:localhost:8000 <user>@<gpu-server>`. Now `localhost:8000` on the laptop is the server.
-3. **Start the explorer in shadow mode first**: it keeps the map's ranking while you read what the VLM would have done. It pauses up to `vlm_timeout` at each goal choice to hear the answer, the same pause as `active` mode, so a run can still turn out a little differently from one with the VLM off:
-   ```shell
-   docker compose exec unitree_ros bash -ic 'ros2 run go2_auto_mapper explorer --ros-args -p vlm_mode:=shadow'
-   ```
-   On Windows (Docker Desktop), the container reaches the laptop as `host.docker.internal`, so add `-p vlm_url:=http://host.docker.internal:8000/v1/chat/completions`. TODO(Luis): confirm this reaches a tunnel bound to the laptop's localhost.
-4. Read the log: each goal prints `VLM agrees` or `VLM differs`, both picks, the scores and the model's one-line reason. When it looks sensible, try `vlm_mode:=active` and compare exploration time and map completeness on the [scorecard](roadmap.md).
+- **VLM view** (`ros2 run go2_auto_mapper vlm_view`, the RViz panel's VLM view button) sends camera pictures to the VLM on the GPU server and publishes `/vlm/view` (picture) and `/vlm/description` (text). **Camera pictures leave the robot** while it runs.
+- **SocialNav view** (`ros2 run go2_auto_mapper socialnav_view`) asks the SocialNav model on the GPU server for 5 waypoints and draws them on `/socialnav/path`. **It never drives Oak.** With no `/frontier_explorer/goal` any more, it always aims at a point 3 m ahead (`goal_ahead_m`).
 
 ## Connects to
 
 - [SLAM](slam.md) - reads `/map` and the `map` frame.
-- [Nav2](nav2.md) - sends goals to `/navigate_to_pose`, uses `/spin` and `/backup`, reads `/local_costmap/costmap`.
-- [Lidar](lidar.md) - reads `/scan` and `/point_cloud2` to check it is safe to move.
-- [twist_mux](twist-mux.md) - recovery moves and waits for people on `/cmd_vel_mapper` (priority 6).
-- [Object detection](object-detection.md) - reads `/people` (people, their walking forecast and groups, `odom` frame).
+- [Nav2](nav2.md) - sends goals to `/navigate_to_pose`, and `/spin` for the Scan button. Nav2 does all obstacle avoidance and recovery.
+- [twist_mux](twist-mux.md) - no longer used: the `/cmd_vel_mapper` input (priority 6) is left over from the old recovery moves.
 - [RViz panels](rviz-panels.md) - the AutoMapper panel starts and stops it.
 - [Simulator](simulator.md) - try it with no robot, or score it over 10 runs.
 - [Scoreboard](scoreboard.md) - counts goals and recoveries from structured events.
-- [RViz panels](rviz-panels.md) - the VLM view button runs `vlm_view`, which publishes `/vlm/view` (picture) and `/vlm/description` (text).
-- [Camera](camera.md) - with `vlm_mode` on, keeps one `/camera/image_raw` picture per direction for the VLM.
 
 ## How it breaks
 
-From the package README and Luis's commits (Oct 14-19):
+For the current explorer (not yet tried on Oak, TODO(jeth): a watched run on Oak):
+
+- **Declares "Exploration complete" at the start.** In 10 [Simulator](simulator.md) runs in Noah's ITE hallway world (2026-11-15, 300 s each), 5 runs ended at about 1% of the map. Its first goals were about 0.8 m *behind* Oak. Nav2's progress check aborted the turn on the spot, both goals were blacklisted, and with nothing else to try it finished. Averaged over the 9 runs that started, it mapped 16.6% against 41.4% for the previous explorer; in the runs where it got going it was ahead in 3 of 4. Ten runs is too few to call any of those gaps real.
+
+- **Goals inside the inflation.** If `goal_clearance` is smaller than Nav2's global `inflation_radius`, goals land where Nav2 can't place Oak; they get rejected and blacklisted, and exploring wastes time. Keep the two about equal.
+- **Gives up on a narrow doorway.** A frontier whose every square is within 0.55 m of a wall offers no goal at all, so a doorway narrower than about 1.1 m is never entered.
+- **Wedged.** It never moves Oak itself; if Nav2's own recovery can't free Oak, the explorer only cancels after 18 s and tries elsewhere. Use the gamepad or keyboard.
+- **COMPLETE too early or never.** It needs 3 empty loops to finish; if SLAM keeps adding tiny edges, it keeps going.
+
+Older history, from the previous explorer that this port replaced (package README and Luis's commits, Oct 14-19):
 
 - **Stopping for no reason.** Drifted floor points in the 3D cloud were marked as obstacles, and a 0.5 m lidar cut-off hid walls beside the robot. Fixed by giving Nav2 only the filtered 2D scan and lowering the minimum range to 0.1 m.
 - **"No usable goal".** Press Scan: it re-looks and retries recently failed spots.
 - **Nibbling the nearest edge.** Ranking goals by distance made it creep along the closest frontier; replaced by "most revealed per meter" on 2026-10-16.
 - **Two motions at once.** Codex reviews on 2026-10-17 found cases where a late Nav2 reply or a recovery move could override a stop; each maneuver is now tracked until Nav2 confirms it ended, and a latched stop always wins.
-- **Latched stopped next to the first close wall.** The unstuck check used to look at Oak's whole padded body, including the nose. Once something was within about 0.25 m of the nose, its inflated cost already covered the body, so backing away and both side moves all looked blocked, and Oak waited forever ("no safe direction: rear and both sides lack clearance"). It also refused moves through Nav2's inscribed band (cells where the robot's *centre* would touch) on top of the padded body, which doubled the body's width, so backing out along a wall 0.2 m away looked blocked too. And it never accepted backing up at all: straight behind Oak is the scan's last-plus-one ray, which it read as "no measurement". Found in the [Simulator](simulator.md). Now the whole body is checked through the allowed drift against walls themselves (lethal cells), only the obstacle Oak backs away from is ignored, and the scan wraps around. A first version checked only the half of the body facing the move, which a review caught: a wall beside the front half could be hit if Oak turned while backing up. These fixes reached master in pull request #41 (2026-11-05). Simulator runs still found a case where the normal 0.3 m move could not fit beside a doorway; the explorer now tries shorter moves through the same safety checks. The shorter-move behavior still needs a repeatable simulator comparison and supervised Oak confirmation.
+- **Latched stopped next to the first close wall.** The unstuck check used to look at Oak's whole padded body, including the nose. Once something was within about 0.25 m of the nose, its inflated cost already covered the body, so backing away and both side moves all looked blocked, and Oak waited forever ("no safe direction: rear and both sides lack clearance"). It also refused moves through Nav2's inscribed band (cells where the robot's *centre* would touch) on top of the padded body, which doubled the body's width, so backing out along a wall 0.2 m away looked blocked too. And it never accepted backing up at all: straight behind Oak is the scan's last-plus-one ray, which it read as "no measurement". Found in the [Simulator](simulator.md). Now the whole body is checked through the allowed drift against walls themselves (lethal cells), only the obstacle Oak backs away from is ignored, and the scan wraps around. A first version checked only the half of the body facing the move, which a review caught: a wall beside the front half could be hit if Oak turned while backing up. These fixes reached master in pull request #41 (2026-11-05). In the simulator Oak can still latch stopped beside a 1.2 m doorway (see [Simulator](simulator.md)). Not yet confirmed on Oak.
 - **Backing up is new on the real Oak.** Before pull request #41 these moves were always refused, so Oak has never actually backed up or slid sideways on its own. Now it will. The first tries on the real floor need a spotter ready to stop it (an empty Twist on `/cmd_vel_joy`, or the gamepad).
 - **Ctrl+C did not stop cleanly.** ROS shut itself down before the auto mapper's stop step ran, so the final zero speed and the Nav2 goal cancel never went out. Fixed in pull request #41: ROS now stays up until that step is done.
 - **Waits for fresh data.** After every scan or move it waits up to 12 s for newer `/scan`, `/point_cloud2`, `/map`, costmap and TF. If they don't come, exploration stays stopped until Scan is pressed.
 - **The 3D cloud forgets moved objects only where Oak looks** (see [Lidar](lidar.md)); neither SLAM nor the 3D map is cleared during recovery.
-- **People positions are rough.** They come from the camera's box-height guess (see [Object detection](object-detection.md)), so Oak can wait for a person who is farther away than they look, or steer around one who is not quite where they seem. The camera only looks forward, so people behind or beside Oak are not seen. TODO(Luis): test with people in the lab.
-- **Waiting too long gets the goal dropped.** Nav2 gives up a goal after 10 s without movement (`movement_time_allowance`); the 6 s wait stays under that, so don't raise one without the other.
 - **Big maps** make each step slower, because the whole map is rescanned every cycle.
-- **VLM server down or slow** (tunnel closed, server off, wrong address): it logs "VLM gave no ranking" with the reason, uses the map score alone, and tries again after 30 s. Exploring never stops for it. In `active` mode each goal can wait up to `vlm_timeout` seconds first.
-- **VLM has nothing to look at.** The camera only sees ahead, so a spot gets a neutral score when no picture faces it (for example right after a move, before the next 360 degree turn). The VLM is new and untested on Oak (added 2026-10-28).
 
 ## Who's on it and what's next
 
-**Luis** owns the auto mapper. In the week of 2026-10-18 he made exploration reliable (fixes above, Scan and Reset maps buttons, faster frontiers, Nav2 and SLAM tuning) and merged it to master. Max fixed the unstuck move after the [Simulator](simulator.md) found it latching (pull request #41), and Noah fixed the Ctrl+C cleanup in the same pull request. Next: full exploration tests on Oak, with a spotter for the first back-up moves.
+**Luis** owns the auto mapper. In the week of 2026-10-18 he made exploration reliable (fixes above, Scan and Reset maps buttons, faster frontiers, Nav2 and SLAM tuning) and merged it to master. Max fixed the unstuck move after the [Simulator](simulator.md) found it latching (pull request #41), and Noah fixed the Ctrl+C cleanup in the same pull request. In November 2026 the explorer was replaced by the port of the autonomous-go2-inspection explorer (branch `jeth/feat/automap-rework`), which hands all recovery to Nav2. Luis brought Jeth's `explorer.py` onto `luis/fix/socialnav-constants` on 2026-11-16 to test it. Next: fix the early "Exploration complete", then a watched run on Oak.
 
 ## The code
 
-https://github.com/maxhawksby/go2-fusion/tree/master/src/go2_auto_mapper (`explorer.py` runs the loop; `frontier_scoring.py`, `vlm_ranking.py`, `recovery.py`, `obstacle_sensing.py` and `open_space.py` hold the logic that has unit tests).
+https://github.com/maxhawksby/go2-fusion/tree/master/src/go2_auto_mapper (`explorer.py` is the whole explorer; on Luis's branch the previous explorer's helper files are still there for `vlm_view` and `socialnav_view`, unused by the explorer).
 
 With the robot stack running (SLAM and Nav2 on) and a person watching Oak:
 
@@ -177,7 +130,7 @@ cd docker
 docker compose exec unitree_ros bash -ic 'ros2 run go2_auto_mapper explorer'
 ```
 
-Change a setting at start, for example `ros2 run go2_auto_mapper explorer --ros-args -p min_frontier_size:=10`. Scan on demand: `ros2 service call /frontier_explorer/scan std_srvs/srv/Trigger`.
+Change a setting at start, for example `ros2 run go2_auto_mapper explorer --ros-args -p min_frontier_size:=10`. Pause / resume: `ros2 service call /explore/stop std_srvs/srv/Empty` (and `/explore/start`). Scan on demand: `ros2 service call /frontier_explorer/scan std_srvs/srv/Trigger`.
 
 Ctrl+C stops it and cancels the Nav2 goal. If it runs in the background, stop it with `pkill -f 'go2_auto_mapper/lib/go2_auto_mapper/explorer'`. Emergency stop from another terminal:
 
@@ -194,4 +147,4 @@ docker compose run --rm unitree_ros bash -c 'python3 -m pytest /ros2_ws/src/go2_
 
 The robot build check on GitHub also runs these tests on every pull request (style checks are skipped there for now).
 
-<!-- sources: src/go2_auto_mapper/README.md, go2_auto_mapper/explorer.py (subscriptions, action clients, /cmd_vel_mapper), obstacle_sensing.py, frontier_scoring.py, src/go2_robot_sdk/config/twist_mux.yaml, src/go2_rviz_plugins/src/auto_mapper_panel.cpp, docs/USEFUL_COMMANDS.md, AGENTS.md, docs/FUSION.md, git log Oct 14-19 (commits 7ebad74, 6bf385f, 1973d50, 7b3a8e7, 9b9e25b, 264939b, a51627d), contract team updates (Luis) -->
+<!-- sources: autonomous-go2-inspection go2_exploration/src/frontier_explorer.cpp, src/go2_robot_sdk/config/nav2_params.yaml, src/go2_auto_mapper/README.md, go2_auto_mapper/explorer.py (subscriptions, action clients, /cmd_vel_mapper), obstacle_sensing.py, frontier_scoring.py, src/go2_robot_sdk/config/twist_mux.yaml, src/go2_rviz_plugins/src/auto_mapper_panel.cpp, docs/USEFUL_COMMANDS.md, AGENTS.md, docs/FUSION.md, git log Oct 14-19 (commits 7ebad74, 6bf385f, 1973d50, 7b3a8e7, 9b9e25b, 264939b, a51627d), contract team updates (Luis) -->
