@@ -48,7 +48,7 @@ def explorer_stub(ranker, pose=(0.0, 0.0, 0.0)):
                            angle_increment=2 * math.pi / 360)
     node = SimpleNamespace(
         scene_ranker=ranker, scene_ranking=None, scene_scan_id=0, scene_scanning=False,
-        scene_bins_sent=set(), scene_scan_ended=None, vlm_weight=400.0, map=grid,
+        scene_bins_sent=set(), scene_scan_ended={}, vlm_weight=400.0, map=grid,
         map_frame='map', info_gain_range=0.5, latest_scan=scan, messages=messages,
     )
     logger = SimpleNamespace(
@@ -119,10 +119,12 @@ def test_a_finished_ranking_is_picked_up_at_the_next_goal_choice():
     ranker = FakeRanker(DirectionRanking(1, 0.0, 0.0, EAST_OPEN, 'door east',
                                          time.monotonic(), 3))
     node = explorer_stub(ranker)
-    node.scene_scan_ended = time.monotonic() - 2.0
+    # Scan 1 ended 2 s ago; a newer scan 2 ended just now. The log must time
+    # the ranking against its own scan.
+    node.scene_scan_ended = {1: time.monotonic() - 2.0, 2: time.monotonic()}
     ranked = FrontierExplorer.rank_by_direction(node, POOL, 0.0, 0.0)
     assert min(ranked, key=lambda c: c[0])[1] == 1.0
-    assert logged(node, '(3 of 8 views described)') == 1
+    assert logged(node, 'ready 2.0 s after the scan (3 of 8 views described)') == 1
 
 
 def test_a_failed_ranking_is_reported_and_not_used():

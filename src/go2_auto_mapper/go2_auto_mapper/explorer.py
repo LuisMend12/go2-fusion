@@ -1053,7 +1053,9 @@ class FrontierExplorer(Node):
         self.scene_scan_id = 0
         self.scene_scanning = False
         self.scene_bins_sent = set()
-        self.scene_scan_ended = None
+        # When each scan ended (scan id -> time.monotonic()), to log how long
+        # its ranking took.
+        self.scene_scan_ended = {}
         self.views = ViewMemory(bins=VIEW_BINS)
         self.last_view_time = 0.0
         self.camera_sub = self.create_subscription(
@@ -1102,7 +1104,7 @@ class FrontierExplorer(Node):
                     range_cells, index, VIEW_BINS, SCENE_RAYS_PER_DIRECTION),
                 'free_m': free_m,
             })
-        self.scene_scan_ended = time.monotonic()
+        self.scene_scan_ended = {self.scene_scan_id: time.monotonic()}
         self.scene_ranker.finish_scan(self.scene_scan_id, x, y, facts)
 
     def rank_by_direction(self, pool, robot_x, robot_y):
@@ -1111,8 +1113,8 @@ class FrontierExplorer(Node):
 
         result = self.scene_ranker.take_result()
         if result is not None:
-            took = (result.finished_at - self.scene_scan_ended
-                    if self.scene_scan_ended is not None else float('nan'))
+            ended = self.scene_scan_ended.get(result.scan_id)
+            took = float('nan') if ended is None else result.finished_at - ended
             if result.scores is None:
                 self.get_logger().warn(f'Direction ranking failed: {result.reason}')
             else:
