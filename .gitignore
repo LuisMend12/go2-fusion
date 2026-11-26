@@ -26,6 +26,7 @@ node_modules/
 
 # Training data lives on the GPU server, never in the repo.
 data/
+.claude/worktrees/
 
 # Personal learning notes from the VibeWise plugin (Claude Code / Codex).
 .vibe-wise/
