@@ -2,7 +2,7 @@
 title: Docker
 parent: lab-setup
 code: [docker/**, requirements.txt]
-verified: b3d3e30acd20
+verified: 078c043c2dd8
 ---
 
 # Docker
@@ -44,6 +44,8 @@ docker compose down                        # stop it
 ```
 
 On Windows from PowerShell, add `-f docker-compose.windows.yml` after `docker compose`.
+
+The Linux and Windows Compose files pass `VLM_URL` and `VLM_MODEL` to the auto mapper and RViz VLM view. They default to Ollama on the host and Qwen3-VL 8B Instruct. See the [VLM setup](auto-mapper.md#using-the-vlm) for the simulator trial and remote servers.
 
 ## The files
 
