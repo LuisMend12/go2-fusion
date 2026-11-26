@@ -1074,6 +1074,11 @@ class FrontierExplorer(Node):
         self.scene_scanning = True
         self.scene_bins_sent = set()
         self.scene_ranker.start_scan(self.scene_scan_id)
+        # The ranking may go out before the turn ends (once enough slices are
+        # described), so it gets the map as it is now; the end refreshes it.
+        facts = self.scene_facts()
+        if facts is not None:
+            self.scene_ranker.set_facts(self.scene_scan_id, *facts)
 
     def scene_scan_finished(self):
         """Ask for a direction ranking from what the scan saw and the map says."""
@@ -1081,9 +1086,23 @@ class FrontierExplorer(Node):
         if self.scene_ranker is None or not self.scene_scanning:
             return
         self.scene_scanning = False
+        facts = self.scene_facts()
+        if facts is None:
+            return
+        self.scene_scan_ended = {self.scene_scan_id: time.monotonic()}
+        self.scene_ranker.finish_scan(self.scene_scan_id, *facts)
+
+    def scene_facts(self):
+        """
+        Return (x, y, facts) for the directions from where the robot stands.
+
+        facts says what the map and lidar show each way; None without a pose
+        or a map.
+        """
+
         pose = self.get_robot_pose(self.map_frame)
         if pose is None or self.map is None:
-            return
+            return None
         x, y, yaw = pose
         info = self.map.info
         gx, gy = self.world_to_grid(x, y)
@@ -1104,8 +1123,7 @@ class FrontierExplorer(Node):
                     range_cells, index, VIEW_BINS, SCENE_RAYS_PER_DIRECTION),
                 'free_m': free_m,
             })
-        self.scene_scan_ended = {self.scene_scan_id: time.monotonic()}
-        self.scene_ranker.finish_scan(self.scene_scan_id, x, y, facts)
+        return x, y, facts
 
     def rank_by_direction(self, pool, robot_x, robot_y):
         """The pool with goals in well-ranked directions scoring better, if a

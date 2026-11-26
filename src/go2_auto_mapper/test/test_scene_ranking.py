@@ -60,7 +60,13 @@ def test_rank_request_lists_every_direction_with_its_facts():
     assert 'an open doorway' in text and '900' in text and '3.2 m' in text
     assert 'no picture' in text and 'no reading' in text
     assert 'exactly 2' in text
+    assert 'reason' not in text          # scores only: a shorter answer arrives sooner
     assert payload['response_format'] == {'type': 'json_object'}
+
+
+def test_direction_scores_need_no_reason():
+    scores, reason = parse_direction_scores('{"scores": [0.2, 0.8]}', 2)
+    assert scores == [0.2, 0.8] and reason == ''
 
 
 def test_direction_scores_are_clamped_and_must_match_the_count():
@@ -171,6 +177,41 @@ def test_worker_describes_views_then_ranks_all_directions():
     assert urls == ['http://vlm'] * 3 + ['http://llm']
     rank_text = server.calls[-1][1]['messages'][0]['content']
     assert 'view 1' in rank_text and 'no picture' in rank_text
+
+
+def test_worker_ranks_once_six_views_are_described_without_waiting_for_the_turn():
+    server = FakeServer()
+    ranker = SceneRanker('http://vlm', 'vlm-model', 'http://llm', 'llm-model', 5.0,
+                         encode=lambda frame: b'jpeg', bins=8, post=server, rank_after=6)
+    facts = [{'heading_deg': 22.5 + 45 * b, 'unknown_cells': b, 'free_m': 2.0}
+             for b in range(8)]
+    ranker.start_scan(4)
+    ranker.set_facts(4, 0.5, 0.5, facts)
+    for b in range(6):
+        ranker.add_view(4, b, object())
+    result = wait_for(ranker)            # no finish_scan yet: the turn is still going
+    assert result is not None and result.scan_id == 4 and result.described == 6
+    # The turn ends: the last views and the finish must not rank this scan again.
+    ranker.add_view(4, 6, object())
+    ranker.add_view(4, 7, object())
+    ranker.finish_scan(4, 0.5, 0.5, facts)
+    assert wait_for(ranker, seconds=0.5) is None
+    assert [url for url, _ in server.calls].count('http://llm') == 1
+
+
+def test_worker_ranks_at_the_end_of_a_short_turn():
+    server = FakeServer()
+    ranker = SceneRanker('http://vlm', 'vlm-model', 'http://llm', 'llm-model', 5.0,
+                         encode=lambda frame: b'jpeg', bins=8, post=server, rank_after=6)
+    facts = [{'heading_deg': 0.0, 'unknown_cells': 0, 'free_m': None}] * 8
+    ranker.start_scan(5)
+    ranker.set_facts(5, 0.0, 0.0, facts)
+    for b in range(2):
+        ranker.add_view(5, b, object())
+    assert wait_for(ranker, seconds=0.3) is None   # 2 of 6: not yet
+    ranker.finish_scan(5, 0.0, 0.0, facts)
+    result = wait_for(ranker)
+    assert result is not None and result.described == 2
 
 
 def test_worker_drops_views_from_an_older_scan():

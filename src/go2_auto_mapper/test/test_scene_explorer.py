@@ -18,11 +18,14 @@ class FakeRanker:
     """Records what the explorer hands over; answers only when told to."""
 
     def __init__(self, result=None):
-        self.started, self.views, self.finished = [], [], []
+        self.started, self.views, self.finished, self.facts = [], [], [], []
         self.result = result
 
     def start_scan(self, scan_id):
         self.started.append(scan_id)
+
+    def set_facts(self, scan_id, x, y, facts):
+        self.facts.append((scan_id, x, y, facts))
 
     def add_view(self, scan_id, index, frame):
         self.views.append((scan_id, index))
@@ -56,6 +59,7 @@ def explorer_stub(ranker, pose=(0.0, 0.0, 0.0)):
     node.get_logger = lambda: logger
     node.get_robot_pose = lambda frame: pose
     node.world_to_grid = lambda x, y: FrontierExplorer.world_to_grid(node, x, y)
+    node.scene_facts = lambda: FrontierExplorer.scene_facts(node)
     return node
 
 
@@ -82,6 +86,8 @@ def test_scan_hands_every_direction_to_the_ranker():
     assert facts[4]['unknown_cells'] == 0
     assert all(f['free_m'] == 2.0 for f in facts)
     assert not node.scene_scanning
+    # The facts also went out when the scan started, for an early ranking.
+    assert ranker.facts and ranker.facts[0][0] == 1 and len(ranker.facts[0][3]) == VIEW_BINS
 
 
 def test_a_scan_that_never_started_asks_for_nothing():

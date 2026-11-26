@@ -45,9 +45,13 @@ RANK_PROMPT = (
     'direction from 0.0 to 1.0 for how much new space walking that way would reveal. '
     'Open doorways, hallways and open rooms score high; walls, closed doors, dead ends '
     'and furniture score low. Where there is no picture, judge from the map numbers '
-    'alone. Reply with JSON only, with exactly {n} scores in the order given: '
-    '{{"scores": [one number per direction], "reason": "one short sentence"}}\n'
+    'alone. Reply with JSON only, with exactly {n} scores in the order given and '
+    'nothing else: {{"scores": [one number per direction]}}\n'
 )
+
+# Rank as soon as this many slices are described, without waiting for the
+# turn to end: the answer then lands about when the scan finishes.
+RANK_AFTER_VIEWS = 6
 
 # One finished ranking: which scan it belongs to, where the robot stood, one
 # score per direction (None if the request failed), the model's reason or the
@@ -117,7 +121,7 @@ def build_rank_request(model, facts):
         'messages': [{'role': 'user',
                       'content': RANK_PROMPT.format(n=len(facts)) + '\n'.join(lines)}],
         'temperature': 0.0,
-        'max_tokens': 200,
+        'max_tokens': 80,
         'response_format': {'type': 'json_object'},
     }
 
@@ -194,14 +198,17 @@ class SceneRanker:
     """
     Describe views and rank directions on one background thread.
 
-    The explorer calls start_scan() when a scan starts, add_view() for each
-    new slice the camera covers, and finish_scan() when the turn ends. Jobs run
-    in order on one thread, so the ranking request goes out after the scan's
-    pictures are described. take_result() hands over a finished ranking once.
+    The explorer calls start_scan() when a scan starts, set_facts() with what
+    the map and lidar say per direction, add_view() for each new slice the
+    camera covers, and finish_scan() when the turn ends. Jobs run in order on
+    one thread. The directions are ranked once per scan: as soon as
+    `rank_after` slices are described (the turn may still be going), or when
+    the turn ends if it ended sooner. take_result() hands over a finished
+    ranking once.
     """
 
     def __init__(self, vlm_url, vlm_model, llm_url, llm_model, timeout, encode,
-                 bins=8, api_key=None, post=post_chat):
+                 bins=8, api_key=None, post=post_chat, rank_after=RANK_AFTER_VIEWS):
         self.vlm_url, self.vlm_model = vlm_url, vlm_model
         self.llm_url, self.llm_model = llm_url, llm_model
         self.timeout = timeout
@@ -209,10 +216,13 @@ class SceneRanker:
         self.bins = bins
         self.api_key = api_key
         self.post = post
+        self.rank_after = rank_after
         self.lock = threading.Lock()
         self.jobs = queue.Queue()
         self.scan_id = None
         self.descriptions = {}
+        self.facts = None          # (pose, facts) for the current scan
+        self.ranked = False        # the current scan's ranking was asked for
         self.result = None
         self.thread = threading.Thread(target=self._work, daemon=True)
         self.thread.start()
@@ -221,12 +231,21 @@ class SceneRanker:
         with self.lock:
             self.scan_id = scan_id
             self.descriptions = {}
+            self.facts = None
+            self.ranked = False
+
+    def set_facts(self, scan_id, x, y, facts):
+        """Store what the map and lidar say per direction for this scan."""
+        with self.lock:
+            if scan_id == self.scan_id:
+                self.facts = ((x, y), facts)
 
     def add_view(self, scan_id, index, frame):
         self.jobs.put(('describe', scan_id, index, frame))
 
     def finish_scan(self, scan_id, x, y, facts):
-        self.jobs.put(('rank', scan_id, (x, y), facts))
+        self.set_facts(scan_id, x, y, facts)
+        self.jobs.put(('finish', scan_id))
 
     def take_result(self):
         """Return the finished DirectionRanking once; None while waiting or if taken."""
@@ -234,25 +253,30 @@ class SceneRanker:
             result, self.result = self.result, None
         return result
 
-    def _current(self, scan_id):
-        with self.lock:
-            return scan_id == self.scan_id
-
     def _work(self):
         while True:
             job = self.jobs.get()
             try:
                 if job[0] == 'describe':
                     self._describe(*job[1:])
+                    if self._enough_described(job[1]):
+                        self._rank(job[1])
                 else:
-                    self._rank(*job[1:])
+                    self._rank(job[1])
             except Exception as e:  # never let the thread die silently
-                if job[0] == 'rank':
-                    self._store(job[1], job[2], None, f'unexpected error: {e!r}', 0)
+                self._store(job[1], (float('nan'), float('nan')), None,
+                            f'unexpected error: {e!r}', 0)
+
+    def _enough_described(self, scan_id):
+        with self.lock:
+            return (scan_id == self.scan_id and not self.ranked
+                    and self.facts is not None
+                    and len(self.descriptions) >= self.rank_after)
 
     def _describe(self, scan_id, index, frame):
-        if not self._current(scan_id):
-            return   # a late frame from an older scan
+        with self.lock:
+            if scan_id != self.scan_id or self.ranked:
+                return   # a late frame from an older scan, or already ranked
         try:
             text = self.post(self.vlm_url, build_view_request(self.vlm_model, self.encode(frame)),
                              self.timeout, self.api_key)
@@ -263,11 +287,13 @@ class SceneRanker:
             if scan_id == self.scan_id and description:
                 self.descriptions[index] = description
 
-    def _rank(self, scan_id, pose, facts):
-        if not self._current(scan_id):
-            return
+    def _rank(self, scan_id):
         with self.lock:
+            if scan_id != self.scan_id or self.ranked or self.facts is None:
+                return
+            self.ranked = True
             descriptions = dict(self.descriptions)
+            pose, facts = self.facts
         filled = [dict(fact, description=descriptions.get(i)) for i, fact in enumerate(facts)]
         try:
             text = self.post(self.llm_url, build_rank_request(self.llm_model, filled),
