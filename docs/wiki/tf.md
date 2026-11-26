@@ -42,7 +42,7 @@ A standalone model viewer should choose `base_link` as its fixed frame.
 - [SLAM](slam.md) - publishes `map` -> `odom`.
 - [Lidar](lidar.md) and [Camera](camera.md) - their messages are stamped with `odom` and `front_camera`.
 - [Nav2](nav2.md), [Auto mapper](auto-mapper.md), [Map viewers](map-viewers.md) - all look up where `base_link` is on `map`.
-- [Object detection](object-detection.md) - the unmerged map-memory branch uses TF to put objects on the map.
+- [Object detection](object-detection.md) - uses TF to put the objects it remembers on the map (merged in [d0d7409](https://github.com/maxhawksby/go2-fusion/commit/d0d7409b7262768ccbd527f628a5c2a7388bba39)).
 
 ## How it breaks
 
@@ -55,6 +55,7 @@ A standalone model viewer should choose `base_link` as its fixed frame.
   Offline replay did not change latest poses after live TF arrived, so this
   cleanup is not proof that the navigation stall is fixed. See the
   [investigation and validation limits](../tf-ownership-investigation.md).
+  History: the joints came from the upstream `go2_ros2_sdk`, which added both on 2024-03-10 ([e10bba6](https://github.com/abizovnuralem/go2_ros2_sdk/commit/e10bba66794d6924ce7f74ca6efbaa154a2ad887)). Noah removed them in pull request [#62](https://github.com/maxhawksby/go2-fusion/pull/62), Luis's [#67](https://github.com/maxhawksby/go2-fusion/pull/67) put them back on the team's master, and [#69](https://github.com/maxhawksby/go2-fusion/pull/69) re-opens the removal. This fork merged #69; the team's master has not, so there the joints are still in `go2.urdf`.
 
 ## Who's on it and what's next
 
@@ -74,4 +75,4 @@ docker compose exec unitree_ros bash -ic 'ros2 run tf2_ros tf2_echo map base_lin
 docker compose exec unitree_ros bash -ic 'ros2 run tf2_tools view_frames'   # writes frames.pdf
 ```
 
-<!-- sources: src/go2_robot_sdk/urdf/go2.urdf (links, joints, front_camera_joint, radar_joint, map_joint, odom_joint), launch/robot.launch.py (robot_state_publisher), go2_robot_sdk/infrastructure/ros2/ros2_publisher.py (odom transform), config/mapper_params_online_async.yaml (transform_timeout), config/nav2_params.yaml (voxel layer comments), go2_map_viewer_julia/README.md, docs/TEST_LOG.md, contract team updates (Adib) -->
+<!-- sources: src/go2_robot_sdk/urdf/go2.urdf (links, joints, front_camera_joint, radar_joint, map_joint, odom_joint), launch/robot.launch.py (robot_state_publisher), go2_robot_sdk/infrastructure/ros2/ros2_publisher.py (odom transform), config/mapper_params_online_async.yaml (transform_timeout), config/nav2_params.yaml (voxel layer comments), go2_map_viewer_julia/README.md, docs/TEST_LOG.md, contract team updates (Adib); joint history: git log -- src/go2_robot_sdk/urdf/go2.urdf (359def8, f926bb8), gh pr view 62 67 69, upstream abizovnuralem/go2_ros2_sdk commits for go2_robot_sdk/urdf/go2.urdf (e10bba6) -->
