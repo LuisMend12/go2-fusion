@@ -87,10 +87,19 @@ from go2_auto_mapper.socialnav_follow import (
     next_step,
     waypoints_to_map,
 )
+from go2_auto_mapper.scene_ranking import (
+    SceneRanker,
+    direction_bonus,
+    direction_heading,
+    ranking_usable,
+    unknown_toward,
+)
 from go2_auto_mapper.vlm_ranking import (
     ViewMemory,
     VlmClient,
+    clear_distance,
     frontier_fact,
+    heading_bin,
     match_score,
     suggestion_bonus,
     usable_heading,
@@ -159,6 +168,14 @@ class FrontierExplorer(Node):
         # In active mode, unknown cells a goal is worth extra for lying the way
         # vlm_view last suggested. Needs the panel's VLM view on.
         self.declare_parameter('vlm_suggest_weight', 300.0)
+        # vlm_mode 'describe' (scene_ranking.py): the VLM describes each slice of
+        # the scan while the robot turns, then this text model ranks the
+        # directions. The explorer never waits for either: a ranking counts at a
+        # goal choice only if it is ready. LLM_URL and LLM_MODEL set the defaults.
+        self.declare_parameter(
+            'llm_url', os.environ.get('LLM_URL', 'http://localhost:11434/v1/chat/completions'))
+        self.declare_parameter(
+            'llm_model', os.environ.get('LLM_MODEL', 'qwen3:30b-a3b-instruct-2507-q4_K_M'))
         # SocialNav pipeline (socialnav_follow.py). 'off': goals go to Nav2 as
         # before. 'active': the explorer still picks the goal, SocialNav plans
         # the steps toward it, Nav2's planner and costmap and the lidar check
@@ -959,6 +976,8 @@ class FrontierExplorer(Node):
                     return WAITING_FOR_VLM
                 if self.vlm_mode == 'active':
                     pool = self.follow_suggestion(pool, robot_x, robot_y)
+            if self.scene_ranker is not None:
+                pool = self.rank_by_direction(pool, robot_x, robot_y)
 
         best = min(pool, key=lambda c: c[0])
 
@@ -973,12 +992,16 @@ class FrontierExplorer(Node):
         """Camera subscription and server client, unless vlm_mode is off."""
 
         self.vlm_client = None
+        self.scene_ranker = None
         self.vlm_mode = vlm_mode_name(self.get_parameter('vlm_mode').value)
         if self.vlm_mode == 'off':
             return
+        if self.vlm_mode == 'describe':
+            self.setup_scene_ranking()
+            return
         if self.vlm_mode not in ('shadow', 'active'):
             self.get_logger().warn(
-                f"Unknown vlm_mode '{self.vlm_mode}' (off, shadow or active); "
+                f"Unknown vlm_mode '{self.vlm_mode}' (off, shadow, active or describe); "
                 'not using the VLM.'
             )
             return
@@ -1012,6 +1035,114 @@ class FrontierExplorer(Node):
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
             )
         self.get_logger().info(f'VLM ranking in {self.vlm_mode} mode, asking {url}.')
+
+    def setup_scene_ranking(self):
+        """vlm_mode 'describe': camera views described during each scan, the
+        directions ranked by a text model, used at a goal choice only if ready."""
+
+        self.vlm_weight = self.get_parameter('vlm_weight').value
+        vlm_url = self.get_parameter('vlm_url').value
+        llm_url = self.get_parameter('llm_url').value
+        self.scene_ranker = SceneRanker(
+            vlm_url, self.get_parameter('vlm_model').value,
+            llm_url, self.get_parameter('llm_model').value,
+            SCENE_REQUEST_TIMEOUT_SEC, encode_jpeg, bins=VIEW_BINS,
+            api_key=os.environ.get('VLM_API_KEY'),
+        )
+        self.scene_ranking = None
+        self.scene_scan_id = 0
+        self.scene_scanning = False
+        self.scene_bins_sent = set()
+        self.scene_scan_ended = None
+        self.views = ViewMemory(bins=VIEW_BINS)
+        self.last_view_time = 0.0
+        self.camera_sub = self.create_subscription(
+            Image, '/camera/image_raw', self.camera_callback,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        )
+        self.get_logger().info(
+            f'VLM describe mode: views described by {vlm_url}, directions ranked by '
+            f'{llm_url}; never waiting for either.'
+        )
+
+    def scene_scan_started(self):
+        if self.scene_ranker is None:
+            return
+        self.scene_scan_id += 1
+        self.scene_scanning = True
+        self.scene_bins_sent = set()
+        self.scene_ranker.start_scan(self.scene_scan_id)
+
+    def scene_scan_finished(self):
+        """Ask for a direction ranking from what the scan saw and the map says."""
+
+        if self.scene_ranker is None or not self.scene_scanning:
+            return
+        self.scene_scanning = False
+        pose = self.get_robot_pose(self.map_frame)
+        if pose is None or self.map is None:
+            return
+        x, y, yaw = pose
+        info = self.map.info
+        gx, gy = self.world_to_grid(x, y)
+        range_cells = int(self.info_gain_range / info.resolution)
+        scan = self.latest_scan
+        facts = []
+        for index in range(VIEW_BINS):
+            heading = direction_heading(index, VIEW_BINS)
+            free_m = None
+            if scan is not None:
+                free_m = clear_distance(scan.ranges, scan.angle_min, scan.angle_increment,
+                                        heading - yaw, math.pi / VIEW_BINS)
+            facts.append({
+                'heading_deg': math.degrees(heading),
+                'unknown_cells': unknown_toward(
+                    self.map.data, info.width, info.height,
+                    int(math.floor(gx)), int(math.floor(gy)),
+                    range_cells, index, VIEW_BINS, SCENE_RAYS_PER_DIRECTION),
+                'free_m': free_m,
+            })
+        self.scene_scan_ended = time.monotonic()
+        self.scene_ranker.finish_scan(self.scene_scan_id, x, y, facts)
+
+    def rank_by_direction(self, pool, robot_x, robot_y):
+        """The pool with goals in well-ranked directions scoring better, if a
+        ranking made here is ready; the pool unchanged otherwise. Never waits."""
+
+        result = self.scene_ranker.take_result()
+        if result is not None:
+            took = (result.finished_at - self.scene_scan_ended
+                    if self.scene_scan_ended is not None else float('nan'))
+            if result.scores is None:
+                self.get_logger().warn(f'Direction ranking failed: {result.reason}')
+            else:
+                self.get_logger().info(
+                    f'Direction ranking ready {took:.1f} s after the scan '
+                    f'({result.described} of {VIEW_BINS} views described): '
+                    f'{[round(s, 2) for s in result.scores]}: {result.reason}'
+                )
+            self.scene_ranking = result
+
+        if not ranking_usable(self.scene_ranking, robot_x, robot_y, time.monotonic(),
+                              SCENE_MAX_OFFSET_M, SCENE_MAX_AGE_SEC):
+            self.get_logger().info('Direction ranking not ready here; map score alone.')
+            return pool
+
+        ranked = [
+            (c[0] - direction_bonus(
+                self.scene_ranking, math.atan2(c[2] - robot_y, c[1] - robot_x),
+                self.vlm_weight),) + c[1:]
+            for c in pool
+        ]
+        before = min(pool, key=lambda c: c[0])
+        after = min(ranked, key=lambda c: c[0])
+        verdict = 'keeps' if before[1:3] == after[1:3] else 'changes'
+        self.get_logger().info(
+            f'Direction ranking used: it {verdict} the goal '
+            f'(map ({before[1]:.2f}, {before[2]:.2f}), with ranking '
+            f'({after[1]:.2f}, {after[2]:.2f})).'
+        )
+        return ranked
 
     # ==========================================================
     # SOCIALNAV PIPELINE (socialnav_follow.py)
@@ -1393,6 +1524,12 @@ class FrontierExplorer(Node):
             return
         self.last_view_time = now
         self.views.remember(*pose, msg, now)
+        # Describe mode: each new slice of a scan goes to the VLM right away.
+        if self.scene_ranker is not None and self.scene_scanning:
+            index = heading_bin(pose[2], VIEW_BINS)
+            if index not in self.scene_bins_sent:
+                self.scene_bins_sent.add(index)
+                self.scene_ranker.add_view(self.scene_scan_id, index, msg)
 
     def rank_with_vlm(self, pool, robot_x, robot_y):
         """The pool with the VLM's opinion added to the best few scores, the
@@ -1947,6 +2084,7 @@ class FrontierExplorer(Node):
             self.spin_client, goal, 'Scan', self.scan_time_allowance
         ):
             self.scan_pending = False
+            self.scene_scan_started()
             self.get_logger().info('Turning in place to scan the surroundings.')
 
     def observe(self, name, msg):
@@ -2464,6 +2602,9 @@ class FrontierExplorer(Node):
             self.finish_maneuver()
             return
 
+        if self.maneuver_name == 'Scan':
+            # Rank what the turn saw, even a turn cut short.
+            self.scene_scan_finished()
         if self.maneuver_name == 'Scan' and status != 4:
             self._stop_for(f'scan maneuver ended with status {status}')
         if self.maneuver_name == 'Scan' and status == 4:
@@ -3395,6 +3536,14 @@ VIEW_MAX_ANGLE_RAD = math.radians(35.0)
 VLM_MATCH_RADIUS_M = 0.5
 VLM_RESULT_MAX_AGE_SEC = 30.0
 VLM_RETRY_SEC = 30.0
+
+# Describe mode (scene_ranking.py): a ranking counts only near where its scan
+# was made and while recent; each request (one picture, or the ranking) gets
+# this long; rays per direction slice when counting unknown cells that way.
+SCENE_MAX_OFFSET_M = 0.5
+SCENE_MAX_AGE_SEC = 60.0
+SCENE_REQUEST_TIMEOUT_SEC = 20.0
+SCENE_RAYS_PER_DIRECTION = 6
 
 # Images sent to the VLM are shrunk to this width: plenty for "doorway or
 # wall", and it keeps each request small over the SSH tunnel.
