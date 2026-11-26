@@ -58,12 +58,12 @@ DirectionRanking = namedtuple(
 
 
 def direction_heading(index, bins):
-    """Map heading (radians) in the middle of slice `index` of `bins`."""
+    """Return the map heading (radians) in the middle of slice `index` of `bins`."""
     return (index + 0.5) * 2.0 * math.pi / bins
 
 
 def build_view_request(model, jpeg):
-    """Chat-completions payload asking the VLM to describe one picture."""
+    """Build the chat-completions payload asking the VLM to describe one picture."""
     url = 'data:image/jpeg;base64,' + base64.b64encode(jpeg).decode('ascii')
     return {
         'model': model,
@@ -78,8 +78,11 @@ def build_view_request(model, jpeg):
 
 
 def parse_view_description(text):
-    """The description from the VLM's reply, the reply itself if it had no
-    JSON, or None if it was empty."""
+    """
+    Return the description from the VLM's reply.
+
+    The reply itself if it had no JSON, or None if it was empty.
+    """
     if not text:
         return None
     match = re.search(r'\{.*\}', text, re.DOTALL)
@@ -94,7 +97,8 @@ def parse_view_description(text):
 
 
 def build_rank_request(model, facts):
-    """Chat-completions payload asking the LLM to score every direction.
+    """
+    Build the chat-completions payload asking the LLM to score every direction.
 
     facts: one dict per direction with heading_deg, description (or None),
     unknown_cells and free_m (or None).
@@ -119,8 +123,11 @@ def build_rank_request(model, facts):
 
 
 def parse_direction_scores(text, count):
-    """(scores, reason) from the LLM's reply, or (None, why) if unusable.
-    Scores are clamped to 0..1, and there must be exactly one per direction."""
+    """
+    Return (scores, reason) from the LLM's reply, or (None, why) if unusable.
+
+    Scores are clamped to 0..1, and there must be exactly one per direction.
+    """
     match = re.search(r'\{.*\}', text or '', re.DOTALL)
     if match is None:
         return None, 'reply had no JSON'
@@ -135,9 +142,12 @@ def parse_direction_scores(text, count):
 
 
 def unknown_toward(data, width, height, gx, gy, range_cells, index, bins, rays):
-    """Unknown cells the lidar could see from cell (gx, gy) within slice
-    `index` of `bins`: `rays` rays spread across the slice, each stopping at a
-    wall or the grid edge, each cell counted once."""
+    """
+    Count the unknown cells the lidar could see from cell (gx, gy) in one slice.
+
+    The slice is `index` of `bins`: `rays` rays spread across it, each stopping at a
+    wall or the grid edge, each cell counted once.
+    """
     seen = set()
     width_rad = 2.0 * math.pi / bins
     for r in range(rays):
@@ -157,8 +167,12 @@ def unknown_toward(data, width, height, gx, gy, range_cells, index, bins, rays):
 
 
 def ranking_usable(ranking, x, y, now, max_offset_m, max_age):
-    """True if `ranking` has scores, was made within `max_offset_m` of (x, y)
-    and finished at most `max_age` seconds ago."""
+    """
+    Check that a ranking can be used here and now.
+
+    True if `ranking` has scores, was made within `max_offset_m` of (x, y)
+    and finished at most `max_age` seconds ago.
+    """
     if ranking is None or ranking.scores is None:
         return False
     if now - ranking.finished_at > max_age:
@@ -167,14 +181,18 @@ def ranking_usable(ranking, x, y, now, max_offset_m, max_age):
 
 
 def direction_bonus(ranking, goal_bearing, weight):
-    """Cells of information gain a goal earns for lying in a well-scored
-    direction: `weight` times that direction's score (0..1)."""
+    """
+    Return the cells of information gain a goal earns for its direction.
+
+    That is `weight` times the score (0..1) of the direction the goal lies in.
+    """
     index = heading_bin(goal_bearing, len(ranking.scores))
     return weight * ranking.scores[index]
 
 
 class SceneRanker:
-    """Describe views and rank directions on one background thread.
+    """
+    Describe views and rank directions on one background thread.
 
     The explorer calls start_scan() when a scan starts, add_view() for each
     new slice the camera covers, and finish_scan() when the turn ends. Jobs run
@@ -211,7 +229,7 @@ class SceneRanker:
         self.jobs.put(('rank', scan_id, (x, y), facts))
 
     def take_result(self):
-        """The finished DirectionRanking once; None while waiting or if taken."""
+        """Return the finished DirectionRanking once; None while waiting or if taken."""
         with self.lock:
             result, self.result = self.result, None
         return result

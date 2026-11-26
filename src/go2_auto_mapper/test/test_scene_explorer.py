@@ -1,8 +1,10 @@
-"""ROS-dependent tests of vlm_mode 'describe' in the explorer; run in the Humble container.
+"""
+ROS-dependent tests of vlm_mode 'describe' in the explorer; run in the Humble container.
 
 The scan hands every direction to the ranker, a goal choice never waits for
 the models, and only a ready ranking made where the robot stands reorders the
-goals."""
+goals.
+"""
 
 import math
 import time
